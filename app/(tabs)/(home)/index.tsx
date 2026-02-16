@@ -1,217 +1,234 @@
-import React, { useRef, useEffect } from "react";
+import React, { useEffect, useRef } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
   Animated,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
+import { BlurView } from "expo-blur";
+import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
-  Scissors,
   AlertTriangle,
-  FileCheck,
   Briefcase,
-  FileText,
-  Layers,
   ChevronRight,
+  FileCheck,
+  FileText,
+  Home,
   PenTool,
+  Wallet,
+  Car,
+  Scale,
+  Scissors,
+  Shield,
+  Users,
 } from "lucide-react-native";
 import Colors from "@/constants/colors";
 import { CATEGORIES } from "@/constants/templates";
 
 const ICON_MAP: Record<string, React.ComponentType<{ color: string; size: number }>> = {
   scissors: Scissors,
-  "alert-triangle": AlertTriangle,
-  "file-check": FileCheck,
+  home: Home,
   briefcase: Briefcase,
   "file-text": FileText,
-  layers: Layers,
+  scale: Scale,
+  "file-check": FileCheck,
+  users: Users,
+  shield: Shield,
+  wallet: Wallet,
+  car: Car,
+  "alert-triangle": AlertTriangle,
 };
 
 export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(30)).current;
+  const yAnim = useRef(new Animated.Value(20)).current;
 
   useEffect(() => {
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
-        duration: 600,
+        duration: 520,
         useNativeDriver: true,
       }),
-      Animated.timing(slideAnim, {
+      Animated.timing(yAnim, {
         toValue: 0,
-        duration: 600,
+        duration: 520,
         useNativeDriver: true,
       }),
     ]).start();
-  }, [fadeAnim, slideAnim]);
-
-  const handleCategoryPress = (categoryId: string) => {
-    router.push({ pathname: "/category", params: { categoryId } });
-  };
+  }, [fadeAnim, yAnim]);
 
   return (
-    <View style={styles.container}>
+    <LinearGradient
+      colors={["#FFF6F3", "#F2F8FF", "#F5FFF7"]}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={styles.container}
+    >
       <ScrollView
-        contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 16 }]}
+        contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 14 }]}
         showsVerticalScrollIndicator={false}
       >
         <Animated.View
-          style={[
-            styles.header,
-            { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
-          ]}
+          style={[styles.headerWrap, { opacity: fadeAnim, transform: [{ translateY: yAnim }] }]}
         >
-          <View style={styles.logoRow}>
-            <View style={styles.logoBadge}>
-              <PenTool color={Colors.white} size={20} />
+          <BlurView intensity={30} tint="light" style={styles.headerCard}>
+            <View style={styles.logoRow}>
+              <View style={styles.logoBubble}>
+                <PenTool color={Colors.white} size={20} />
+              </View>
+              <View>
+                <Text style={styles.logoText}>DocGen Studio</Text>
+                <Text style={styles.subtitle}>Courriers utiles, clairs, exportables en PDF</Text>
+              </View>
             </View>
-            <Text style={styles.logoText}>DocGen</Text>
-          </View>
-          <Text style={styles.subtitle}>
-            Générez vos documents administratifs en quelques secondes
-          </Text>
+          </BlurView>
         </Animated.View>
 
-        <View style={styles.categoriesSection}>
-          <Text style={styles.sectionTitle}>Choisissez une catégorie</Text>
+        <View style={styles.grid}>
           {CATEGORIES.map((category, index) => {
-            const IconComponent = ICON_MAP[category.icon] || FileText;
+            const Icon = ICON_MAP[category.icon] ?? FileText;
             return (
               <TouchableOpacity
                 key={category.id}
-                style={styles.categoryCard}
-                onPress={() => handleCategoryPress(category.id)}
-                activeOpacity={0.7}
+                activeOpacity={0.82}
                 testID={`category-${category.id}`}
+                onPress={() =>
+                  router.push({ pathname: "/category", params: { categoryId: category.id } })
+                }
+                style={styles.cardTouch}
+                accessibilityRole="button"
+                accessibilityLabel={`Ouvrir la categorie ${category.title}`}
+                accessibilityHint={`${category.templates.length} modeles disponibles`}
               >
-                <View style={[styles.categoryIconWrap, { backgroundColor: category.color + "14" }]}>
-                  <IconComponent color={category.color} size={22} />
-                </View>
-                <View style={styles.categoryInfo}>
-                  <Text style={styles.categoryTitle}>{category.title}</Text>
-                  <Text style={styles.categoryDesc}>{category.description}</Text>
-                  <Text style={styles.categoryCount}>
-                    {category.templates.length} modèle{category.templates.length > 1 ? "s" : ""}
+                <BlurView intensity={22} tint="light" style={styles.card}>
+                  <LinearGradient
+                    colors={[`${category.color}66`, `${category.color}26`]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.cardTint}
+                  />
+                  <View style={styles.cardTop}>
+                    <View style={[styles.iconWrap, { backgroundColor: `${category.color}AA` }]}>
+                      <Icon color={Colors.primaryDark} size={19} />
+                    </View>
+                    <ChevronRight color={Colors.textMuted} size={16} />
+                  </View>
+                  <Text style={styles.cardTitle}>{category.title}</Text>
+                  <Text style={styles.cardDesc}>{category.description}</Text>
+                  <Text style={styles.cardCount}>
+                    {category.templates.length} modele{category.templates.length > 1 ? "s" : ""}
                   </Text>
-                </View>
-                <ChevronRight color={Colors.textMuted} size={18} />
+                </BlurView>
               </TouchableOpacity>
             );
           })}
         </View>
-
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>
-            Documents conformes aux usages administratifs français
-          </Text>
-        </View>
       </ScrollView>
-    </View>
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.background,
   },
   scrollContent: {
-    paddingHorizontal: 20,
-    paddingBottom: 32,
+    paddingHorizontal: 16,
+    paddingBottom: 30,
   },
-  header: {
-    marginBottom: 28,
+  headerWrap: {
+    marginBottom: 14,
+  },
+  headerCard: {
+    borderRadius: 22,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.72)",
+    backgroundColor: "rgba(255,255,255,0.28)",
+    overflow: "hidden",
   },
   logoRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 8,
+    gap: 12,
   },
-  logoBadge: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: Colors.primary,
-    alignItems: "center",
+  logoBubble: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: "#7EA7FF",
     justifyContent: "center",
-    marginRight: 12,
+    alignItems: "center",
   },
   logoText: {
-    fontSize: 28,
-    fontWeight: "800" as const,
+    fontSize: 24,
     color: Colors.primary,
-    letterSpacing: -0.5,
+    fontWeight: "800",
+    letterSpacing: -0.4,
   },
   subtitle: {
-    fontSize: 15,
     color: Colors.textSecondary,
-    lineHeight: 22,
-    marginTop: 4,
+    fontSize: 13,
+    marginTop: 3,
   },
-  categoriesSection: {
+  grid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
     gap: 10,
   },
-  sectionTitle: {
-    fontSize: 13,
-    fontWeight: "700" as const,
-    color: Colors.textMuted,
-    textTransform: "uppercase" as const,
-    letterSpacing: 1,
-    marginBottom: 6,
+  cardTouch: {
+    width: "48%",
+    flexGrow: 1,
+    flexBasis: "47%",
   },
-  categoryCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: Colors.surface,
-    borderRadius: 14,
-    padding: 16,
+  card: {
+    borderRadius: 18,
+    padding: 14,
     borderWidth: 1,
-    borderColor: Colors.borderLight,
+    borderColor: "rgba(255,255,255,0.76)",
+    backgroundColor: "rgba(255,255,255,0.28)",
+    overflow: "hidden",
+    minHeight: 156,
   },
-  categoryIconWrap: {
-    width: 46,
-    height: 46,
-    borderRadius: 12,
+  cardTint: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  cardTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  iconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 11,
     alignItems: "center",
     justifyContent: "center",
-    marginRight: 14,
   },
-  categoryInfo: {
-    flex: 1,
-  },
-  categoryTitle: {
-    fontSize: 16,
-    fontWeight: "700" as const,
+  cardTitle: {
     color: Colors.text,
-    marginBottom: 2,
+    fontSize: 15,
+    fontWeight: "800",
+    marginBottom: 4,
   },
-  categoryDesc: {
-    fontSize: 13,
+  cardDesc: {
     color: Colors.textSecondary,
-    lineHeight: 18,
-  },
-  categoryCount: {
-    fontSize: 11,
-    color: Colors.textMuted,
-    marginTop: 4,
-    fontWeight: "600" as const,
-  },
-  footer: {
-    marginTop: 32,
-    alignItems: "center",
-    paddingVertical: 16,
-  },
-  footerText: {
     fontSize: 12,
-    color: Colors.textMuted,
-    textAlign: "center" as const,
-    lineHeight: 18,
+    lineHeight: 17,
+    minHeight: 35,
+  },
+  cardCount: {
+    marginTop: 8,
+    color: Colors.primary,
+    fontSize: 11,
+    fontWeight: "700",
   },
 });

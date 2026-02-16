@@ -1,6 +1,8 @@
-import { Tabs } from "expo-router";
-import { Home, Clock } from "lucide-react-native";
 import React from "react";
+import { StyleSheet } from "react-native";
+import { Tabs } from "expo-router";
+import { Clock, Home, UserCircle2 } from "lucide-react-native";
+import { BlurView } from "expo-blur";
 import Colors from "@/constants/colors";
 
 export default function TabLayout() {
@@ -10,14 +12,19 @@ export default function TabLayout() {
         tabBarActiveTintColor: Colors.primary,
         tabBarInactiveTintColor: Colors.textMuted,
         headerShown: false,
+        tabBarHideOnKeyboard: true,
+        tabBarBackground: () => <BlurView intensity={34} tint="light" style={styles.tabBackground} />,
         tabBarStyle: {
-          backgroundColor: Colors.surface,
-          borderTopColor: Colors.borderLight,
-          borderTopWidth: 1,
+          backgroundColor: "transparent",
+          borderTopColor: "rgba(141,169,208,0.24)",
+          borderTopWidth: StyleSheet.hairlineWidth,
+          height: 62,
+          paddingTop: 6,
+          paddingBottom: 8,
         },
         tabBarLabelStyle: {
           fontSize: 11,
-          fontWeight: "600" as const,
+          fontWeight: "700",
         },
       }}
     >
@@ -35,6 +42,20 @@ export default function TabLayout() {
           tabBarIcon: ({ color, size }) => <Clock color={color} size={size} />,
         }}
       />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: "Profil",
+          tabBarIcon: ({ color, size }) => <UserCircle2 color={color} size={size} />,
+        }}
+      />
     </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+  tabBackground: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(255,255,255,0.72)",
+  },
+});

@@ -1,280 +1,765 @@
-import React, { useState, useCallback, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
+  Alert,
+  KeyboardAvoidingView,
+  PanResponder,
+  Platform,
   ScrollView,
+  StyleSheet,
+  Text,
   TextInput,
   TouchableOpacity,
-  KeyboardAvoidingView,
-  Platform,
-  Alert,
+  View,
 } from "react-native";
+import * as ImagePicker from "expo-image-picker";
+import { BlurView } from "expo-blur";
+import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
-import { Send, Check } from "lucide-react-native";
+import { Check, Eraser, ImagePlus, PenLine, Send, Sparkles, UserRound } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Svg, { Path } from "react-native-svg";
 import Colors from "@/constants/colors";
+import {
+  DocumentFormValues,
+  FIELD_SECTION_LABELS,
+  FormField,
+  TONE_OPTIONS,
+  ToneType,
+} from "@/constants/types";
 import { findTemplate } from "@/constants/templates";
-import { TONE_OPTIONS, DocumentFormData, ToneType } from "@/constants/types";
-import { generateDocument } from "@/utils/documentGenerator";
 import { useDocuments } from "@/context/DocumentContext";
+import { useProfile } from "@/context/ProfileContext";
+import { generateDocument, validateTemplateValues } from "@/utils/documentGenerator";
+import { createDocumentId } from "@/utils/ids";
+import { SignaturePreview } from "@/components/SignaturePreview";
+
+const SECTION_TINTS: Record<string, [string, string]> = {
+  expediteur: ["rgba(181,220,255,0.52)", "rgba(240,249,255,0.2)"],
+  destinataire: ["rgba(255,218,208,0.52)", "rgba(255,247,244,0.2)"],
+  demande: ["rgba(206,240,206,0.5)", "rgba(248,255,248,0.2)"],
+  pieces: ["rgba(255,236,194,0.54)", "rgba(255,252,241,0.2)"],
+};
+
+function getFrenchToday(): string {
+  return new Intl.DateTimeFormat("fr-FR", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(new Date());
+}
+
+function keyboardTypeFromField(field: FormField) {
+  if (field.type === "email") return "email-address" as const;
+  if (field.type === "phone") return "phone-pad" as const;
+  if (field.type === "number") return "numeric" as const;
+  return "default" as const;
+}
+
+function autoCapitalizeFromField(field: FormField) {
+  if (field.type === "email") return "none" as const;
+  return "sentences" as const;
+}
 
 export default function FormScreen() {
   const { templateId } = useLocalSearchParams<{ templateId: string }>();
   const router = useRouter();
-  const { addDocument } = useDocuments();
+  const insets = useSafeAreaInsets();
+  const { addDocument, history } = useDocuments();
+  const { profile, applyVersion, isLoading: isProfileLoading, registerLastFormTemplate } = useProfile();
 
   const result = useMemo(() => findTemplate(templateId ?? ""), [templateId]);
+  const [values, setValues] = useState<DocumentFormValues>({});
+  const [tone, setTone] = useState<ToneType>("neutre");
+  const [signatureDataUri, setSignatureDataUri] = useState<string | undefined>();
+  const [signatureEditorVisible, setSignatureEditorVisible] = useState(false);
+  const [drawnPaths, setDrawnPaths] = useState<string[]>([]);
+  const [currentPath, setCurrentPath] = useState("");
+  const pathRef = useRef("");
+  const [padSize, setPadSize] = useState({ width: 320, height: 150 });
+  const [formScrollEnabled, setFormScrollEnabled] = useState(true);
+  const applyVersionRef = useRef(applyVersion);
+  const initializedTemplateRef = useRef<string | null>(null);
 
-  const [formData, setFormData] = useState<DocumentFormData>({
-    nom: "",
-    adresse: "",
-    email: "",
-    destinataire: "",
-    adresse_destinataire: "",
-    date: "",
-    details: "",
-    tone: "neutre",
-  });
+  const applyProfileToValues = useCallback(
+    (baseValues: DocumentFormValues): DocumentFormValues => {
+      const next = { ...baseValues };
 
-  const updateField = useCallback((field: keyof DocumentFormData, value: string) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
+      if (next.expediteur_nom !== undefined && profile.expediteur_nom) {
+        next.expediteur_nom = profile.expediteur_nom;
+      }
+      if (next.expediteur_adresse !== undefined && profile.expediteur_adresse) {
+        next.expediteur_adresse = profile.expediteur_adresse;
+      }
+      if (next.expediteur_email !== undefined && profile.expediteur_email) {
+        next.expediteur_email = profile.expediteur_email;
+      }
+      if (next.expediteur_tel !== undefined && profile.expediteur_tel) {
+        next.expediteur_tel = profile.expediteur_tel;
+      }
+      if (next.lieu !== undefined && profile.lieu) {
+        next.lieu = profile.lieu;
+      }
+
+      return next;
+    },
+    [profile]
+  );
+
+  useEffect(() => {
+    if (!result || isProfileLoading) return;
+    if (initializedTemplateRef.current === result.template.id) return;
+    initializedTemplateRef.current = result.template.id;
+
+    const initialValues: DocumentFormValues = {};
+    for (const field of result.template.fields) {
+      initialValues[field.id] = "";
+    }
+
+    setValues(applyProfileToValues(initialValues));
+    setTone("neutre");
+    setSignatureDataUri(profile.signatureDataUri);
+    setSignatureEditorVisible(false);
+    setDrawnPaths([]);
+    setCurrentPath("");
+    pathRef.current = "";
+  }, [applyProfileToValues, isProfileLoading, profile.signatureDataUri, result]);
+
+  useEffect(() => {
+    if (!result?.template.id) return;
+    registerLastFormTemplate(result.template.id);
+  }, [registerLastFormTemplate, result?.template.id]);
+
+  const latestFilledDocument = useMemo(
+    () => history.find((entry) => entry.values.expediteur_nom || entry.values.destinataire_nom),
+    [history]
+  );
+
+  const fieldsBySection = useMemo(() => {
+    if (!result) return [];
+    const sections = new Map<string, FormField[]>();
+
+    for (const field of result.template.fields) {
+      const section = field.section ?? "demande";
+      const currentSection = sections.get(section) ?? [];
+      currentSection.push(field);
+      sections.set(section, currentSection);
+    }
+
+    return Array.from(sections.entries());
+  }, [result]);
+
+  const dateFieldIds = useMemo(() => {
+    if (!result) return [];
+    return result.template.fields
+      .filter((field) => field.type === "date" || field.id === "date")
+      .map((field) => field.id);
+  }, [result]);
+
+  const updateField = useCallback((fieldId: string, value: string) => {
+    setValues((prev) => ({ ...prev, [fieldId]: value }));
   }, []);
 
-  const handleToneSelect = useCallback((tone: ToneType) => {
+  const applyTodayToDateFields = useCallback(() => {
+    if (dateFieldIds.length === 0) return;
+    const today = getFrenchToday();
+
+    setValues((prev) => {
+      const next = { ...prev };
+      for (const fieldId of dateFieldIds) {
+        next[fieldId] = today;
+      }
+      return next;
+    });
+
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setFormData((prev) => ({ ...prev, tone }));
+  }, [dateFieldIds]);
+
+  const applyProfileShortcut = useCallback(() => {
+    setValues((prev) => applyProfileToValues(prev));
+    if (profile.signatureDataUri) {
+      setSignatureDataUri(profile.signatureDataUri);
+    }
+
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  }, [applyProfileToValues, profile.signatureDataUri]);
+
+  useEffect(() => {
+    if (applyVersion === applyVersionRef.current) return;
+    applyVersionRef.current = applyVersion;
+
+    setValues((prev) => applyProfileToValues(prev));
+
+    if (profile.signatureDataUri) {
+      setSignatureDataUri(profile.signatureDataUri);
+    }
+  }, [applyProfileToValues, applyVersion, profile.signatureDataUri]);
+
+  const applyRecipientShortcut = useCallback(() => {
+    if (!latestFilledDocument) return;
+
+    const latestValues = latestFilledDocument.values;
+    setValues((prev) => ({
+      ...prev,
+      destinataire_nom: latestValues.destinataire_nom ?? prev.destinataire_nom,
+      destinataire_adresse: latestValues.destinataire_adresse ?? prev.destinataire_adresse,
+    }));
+
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, [latestFilledDocument]);
+
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderGrant: (event) => {
+          setFormScrollEnabled(false);
+          const x = event.nativeEvent.locationX.toFixed(1);
+          const y = event.nativeEvent.locationY.toFixed(1);
+          const start = `M ${x} ${y}`;
+          pathRef.current = start;
+          setCurrentPath(start);
+        },
+        onPanResponderMove: (event) => {
+          if (!pathRef.current) return;
+          const x = event.nativeEvent.locationX.toFixed(1);
+          const y = event.nativeEvent.locationY.toFixed(1);
+          const next = `${pathRef.current} L ${x} ${y}`;
+          pathRef.current = next;
+          setCurrentPath(next);
+        },
+        onPanResponderRelease: () => {
+          if (!pathRef.current) return;
+          setDrawnPaths((prev) => [...prev, pathRef.current]);
+          pathRef.current = "";
+          setCurrentPath("");
+          setFormScrollEnabled(true);
+        },
+        onPanResponderTerminate: () => {
+          if (pathRef.current) {
+            setDrawnPaths((prev) => [...prev, pathRef.current]);
+          }
+          pathRef.current = "";
+          setCurrentPath("");
+          setFormScrollEnabled(true);
+        },
+      }),
+    []
+  );
+
+  const clearSignaturePad = useCallback(() => {
+    setDrawnPaths([]);
+    setCurrentPath("");
+    pathRef.current = "";
+  }, []);
+
+  const saveDrawnSignature = useCallback(() => {
+    const allPaths = [...drawnPaths, currentPath].filter((path) => path.trim().length > 0);
+    if (allPaths.length === 0) {
+      Alert.alert("Signature vide", "Dessine ta signature avant d'enregistrer.");
+      return;
+    }
+
+    const width = Math.max(220, Math.round(padSize.width));
+    const height = Math.max(120, Math.round(padSize.height));
+    const pathTags = allPaths
+      .map(
+        (path) =>
+          `<path d=\"${path}\" fill=\"none\" stroke=\"#1f2a3d\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>`
+      )
+      .join("");
+
+    const svg = `<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"${width}\" height=\"${height}\" viewBox=\"0 0 ${width} ${height}\"><rect width=\"100%\" height=\"100%\" fill=\"white\"/>${pathTags}</svg>`;
+    const dataUri = `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+
+    setSignatureDataUri(dataUri);
+    setSignatureEditorVisible(false);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  }, [currentPath, drawnPaths, padSize.height, padSize.width]);
+
+  const importSignature = useCallback(async () => {
+    try {
+      const resultPicker = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.92,
+        allowsEditing: true,
+        base64: true,
+      });
+
+      if (resultPicker.canceled || !resultPicker.assets[0]) {
+        return;
+      }
+
+      const asset = resultPicker.assets[0];
+      if (asset.base64) {
+        const mime = asset.mimeType ?? "image/png";
+        setSignatureDataUri(`data:${mime};base64,${asset.base64}`);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        return;
+      }
+
+      setSignatureDataUri(asset.uri);
+    } catch (error) {
+      console.error("Signature import failed", error);
+      Alert.alert("Import impossible", "La signature n'a pas pu etre importee.");
+    }
   }, []);
 
   const handleGenerate = useCallback(() => {
     if (!result) return;
 
-    if (!formData.nom.trim()) {
-      Alert.alert("Champ requis", "Veuillez renseigner votre nom.");
-      return;
-    }
-    if (!formData.destinataire.trim()) {
-      Alert.alert("Champ requis", "Veuillez renseigner le destinataire.");
+    const errors = validateTemplateValues(result.template, values);
+    if (errors.length > 0) {
+      Alert.alert("Champs a completer", errors.slice(0, 3).join("\n"));
       return;
     }
 
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-    const content = generateDocument(result.template.id, formData);
-    const doc = {
-      id: Date.now().toString(),
+    const content = generateDocument(result.template, values, tone);
+    const now = new Date().toISOString();
+    const id = createDocumentId();
+
+    addDocument({
+      id,
       templateId: result.template.id,
+      templateVersion: result.template.version,
       templateTitle: result.template.title,
       categoryTitle: result.category.title,
       content,
-      createdAt: new Date().toISOString(),
-      formData,
-    };
+      createdAt: now,
+      updatedAt: now,
+      values,
+      tone,
+      signatureDataUri,
+    });
 
-    addDocument(doc);
-    router.push({ pathname: "/preview", params: { documentId: doc.id } });
-  }, [formData, result, addDocument, router]);
+    router.push({ pathname: "/preview", params: { documentId: id } });
+  }, [addDocument, result, router, signatureDataUri, tone, values]);
 
   if (!result) {
     return (
-      <View style={styles.container}>
-        <Text style={styles.errorText}>Modèle introuvable</Text>
+      <View style={styles.errorContainer}>
+        <Text style={styles.errorText}>Modele introuvable</Text>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <LinearGradient
+      colors={["#FFF8F4", "#F2F9FF", "#F8FFF5"]}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={styles.container}
+    >
       <Stack.Screen options={{ title: result.template.title }} />
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={100}
+        keyboardVerticalOffset={88}
       >
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 36 }]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          scrollEnabled={formScrollEnabled}
         >
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>VOS INFORMATIONS</Text>
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Prénom et Nom *</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Jean Dupont"
-                placeholderTextColor={Colors.textMuted}
-                value={formData.nom}
-                onChangeText={(v) => updateField("nom", v)}
-                testID="input-nom"
-              />
-            </View>
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Votre adresse</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="12 rue de la Paix, 75001 Paris"
-                placeholderTextColor={Colors.textMuted}
-                value={formData.adresse}
-                onChangeText={(v) => updateField("adresse", v)}
-              />
-            </View>
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Votre email</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="jean.dupont@email.com"
-                placeholderTextColor={Colors.textMuted}
-                value={formData.email}
-                onChangeText={(v) => updateField("email", v)}
-                keyboardType="email-address"
-                autoCapitalize="none"
-              />
-            </View>
-          </View>
+          <BlurView intensity={36} tint="light" style={styles.headCard}>
+            <Text style={styles.headTitle}>{result.template.title}</Text>
+            <Text style={styles.headDesc}>{result.template.description}</Text>
+          </BlurView>
 
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>DESTINATAIRE</Text>
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Nom du destinataire *</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Nom de l'organisme ou de la personne"
-                placeholderTextColor={Colors.textMuted}
-                value={formData.destinataire}
-                onChangeText={(v) => updateField("destinataire", v)}
-                testID="input-destinataire"
-              />
-            </View>
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Adresse du destinataire</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Adresse complète"
-                placeholderTextColor={Colors.textMuted}
-                value={formData.adresse_destinataire}
-                onChangeText={(v) => updateField("adresse_destinataire", v)}
-              />
-            </View>
-          </View>
+          <BlurView intensity={24} tint="light" style={styles.shortcutCard}>
+            <Text style={styles.shortcutTitle}>Raccourcis intelligents</Text>
+            <View style={styles.shortcutRow}>
+              <TouchableOpacity style={styles.shortcutChip} onPress={applyTodayToDateFields} activeOpacity={0.86}>
+                <Sparkles color={Colors.primary} size={14} />
+                <Text style={styles.shortcutText}>Date du jour</Text>
+              </TouchableOpacity>
 
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>DÉTAILS</Text>
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Date du document</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="7 février 2026"
-                placeholderTextColor={Colors.textMuted}
-                value={formData.date}
-                onChangeText={(v) => updateField("date", v)}
-              />
-            </View>
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Contexte / Détails</Text>
-              <TextInput
-                style={[styles.input, styles.multilineInput]}
-                placeholder="Précisez votre situation, numéro de contrat, références..."
-                placeholderTextColor={Colors.textMuted}
-                value={formData.details}
-                onChangeText={(v) => updateField("details", v)}
-                multiline
-                numberOfLines={4}
-                textAlignVertical="top"
-              />
-            </View>
-          </View>
+              <TouchableOpacity
+                style={styles.shortcutChip}
+                onPress={applyProfileShortcut}
+                activeOpacity={0.86}
+                accessibilityRole="button"
+                accessibilityLabel="Appliquer mes informations de profil"
+                disabled={
+                  !profile.expediteur_nom &&
+                  !profile.expediteur_adresse &&
+                  !profile.expediteur_email &&
+                  !profile.expediteur_tel &&
+                  !profile.lieu
+                }
+              >
+                <UserRound color={Colors.primary} size={14} />
+                <Text style={styles.shortcutText}>Mes infos</Text>
+              </TouchableOpacity>
 
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>TON DU DOCUMENT</Text>
-            <View style={styles.toneGrid}>
-              {TONE_OPTIONS.map((tone) => {
-                const isSelected = formData.tone === tone.id;
+              <TouchableOpacity
+                style={styles.shortcutChip}
+                onPress={applyRecipientShortcut}
+                activeOpacity={0.86}
+                accessibilityRole="button"
+                accessibilityLabel="Remplir avec le dernier destinataire"
+                disabled={!latestFilledDocument}
+              >
+                <UserRound color={Colors.primary} size={14} />
+                <Text style={styles.shortcutText}>Dernier destinataire</Text>
+              </TouchableOpacity>
+            </View>
+          </BlurView>
+
+          {fieldsBySection.map(([section, sectionFields]) => (
+            <BlurView key={section} intensity={24} tint="light" style={styles.sectionCard}>
+              <LinearGradient
+                colors={SECTION_TINTS[section] ?? ["rgba(255,255,255,0.45)", "rgba(255,255,255,0.1)"]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.sectionTint}
+              />
+
+              <Text style={styles.sectionLabel}>
+                {FIELD_SECTION_LABELS[section as keyof typeof FIELD_SECTION_LABELS] ?? "Informations"}
+              </Text>
+
+              {sectionFields.map((field) => {
+                const value = values[field.id] ?? "";
+                const multiline = field.multiline || field.type === "textarea";
+                const isDateField = field.type === "date" || field.id === "date";
+                const isAddressField = field.id === "destinataire_adresse" && Boolean(values.expediteur_adresse);
+
                 return (
-                  <TouchableOpacity
-                    key={tone.id}
-                    style={[styles.toneCard, isSelected && styles.toneCardSelected]}
-                    onPress={() => handleToneSelect(tone.id)}
-                    activeOpacity={0.7}
-                    testID={`tone-${tone.id}`}
-                  >
-                    {isSelected && (
-                      <View style={styles.toneCheck}>
-                        <Check color={Colors.white} size={12} />
+                  <View style={styles.inputGroup} key={field.id}>
+                    <View style={styles.inputLabelRow}>
+                      <Text style={styles.inputLabel}>
+                        {field.label}
+                        {field.required ? " *" : ""}
+                      </Text>
+
+                      <View style={styles.inlineActions}>
+                        {isDateField ? (
+                          <TouchableOpacity
+                            style={styles.inlineChip}
+                            activeOpacity={0.86}
+                            onPress={() => updateField(field.id, getFrenchToday())}
+                          >
+                            <Text style={styles.inlineChipText}>Aujourd&apos;hui</Text>
+                          </TouchableOpacity>
+                        ) : null}
+
+                        {isAddressField ? (
+                          <TouchableOpacity
+                            style={styles.inlineChip}
+                            activeOpacity={0.86}
+                            onPress={() => updateField(field.id, values.expediteur_adresse)}
+                          >
+                            <Text style={styles.inlineChipText}>Mon adresse</Text>
+                          </TouchableOpacity>
+                        ) : null}
                       </View>
-                    )}
-                    <Text style={[styles.toneLabel, isSelected && styles.toneLabelSelected]}>
-                      {tone.label}
-                    </Text>
-                    <Text style={[styles.toneDesc, isSelected && styles.toneDescSelected]}>
-                      {tone.description}
-                    </Text>
-                  </TouchableOpacity>
+                    </View>
+
+                    <TextInput
+                      style={[styles.input, multiline && styles.multilineInput]}
+                      placeholder={field.placeholder}
+                      placeholderTextColor={Colors.textMuted}
+                      value={value}
+                      onChangeText={(next) => updateField(field.id, next)}
+                      keyboardType={keyboardTypeFromField(field)}
+                      autoCapitalize={autoCapitalizeFromField(field)}
+                      autoCorrect={false}
+                      multiline={multiline}
+                      numberOfLines={multiline ? 4 : 1}
+                      textAlignVertical={multiline ? "top" : "center"}
+                      testID={`field-${field.id}`}
+                    />
+                    {field.helperText ? <Text style={styles.helperText}>{field.helperText}</Text> : null}
+                  </View>
                 );
               })}
-            </View>
-          </View>
+            </BlurView>
+          ))}
 
-          <View style={styles.generateSection}>
-            <TouchableOpacity
-              style={styles.generateButton}
-              onPress={handleGenerate}
-              activeOpacity={0.8}
-              testID="generate-button"
-            >
-              <Send color={Colors.white} size={18} />
-              <Text style={styles.generateText}>Générer le document</Text>
-            </TouchableOpacity>
-          </View>
+          {result.template.toneEnabled ? (
+            <BlurView intensity={24} tint="light" style={styles.sectionCard}>
+              <Text style={styles.sectionLabel}>Ton du document</Text>
+              <View style={styles.toneGrid}>
+                {TONE_OPTIONS.map((option) => {
+                  const selected = tone === option.id;
+                  return (
+                    <TouchableOpacity
+                      key={option.id}
+                      style={[styles.toneCard, selected && styles.toneCardSelected]}
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        setTone(option.id);
+                      }}
+                      activeOpacity={0.84}
+                      testID={`tone-${option.id}`}
+                    >
+                      {selected ? (
+                        <View style={styles.toneCheck}>
+                          <Check color={Colors.white} size={12} />
+                        </View>
+                      ) : null}
+                      <Text style={[styles.toneLabel, selected && styles.toneLabelSelected]}>{option.label}</Text>
+                      <Text style={[styles.toneDesc, selected && styles.toneDescSelected]}>{option.description}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </BlurView>
+          ) : null}
+
+          <BlurView intensity={24} tint="light" style={styles.sectionCard}>
+            <Text style={styles.sectionLabel}>Signature</Text>
+            <View style={styles.signatureActionRow}>
+              <TouchableOpacity style={styles.secondaryButton} activeOpacity={0.86} onPress={importSignature}>
+                <ImagePlus color={Colors.primary} size={16} />
+                <Text style={styles.secondaryButtonText}>Importer</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.secondaryButton}
+                activeOpacity={0.86}
+                onPress={() => setSignatureEditorVisible((prev) => !prev)}
+                accessibilityRole="button"
+                accessibilityLabel="Dessiner une signature"
+              >
+                <PenLine color={Colors.primary} size={16} />
+                <Text style={styles.secondaryButtonText}>
+                  {signatureEditorVisible ? "Masquer" : "Dessiner"}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.secondaryButton}
+                activeOpacity={0.86}
+                onPress={() => setSignatureDataUri(undefined)}
+                disabled={!signatureDataUri}
+                accessibilityRole="button"
+                accessibilityLabel="Retirer la signature"
+              >
+                <Eraser color={Colors.primary} size={16} />
+                <Text style={styles.secondaryButtonText}>Retirer</Text>
+              </TouchableOpacity>
+            </View>
+
+            {signatureEditorVisible ? (
+              <View style={styles.signaturePadWrap}>
+                <View
+                  style={styles.signaturePad}
+                  onLayout={(event) => {
+                    const { width, height } = event.nativeEvent.layout;
+                    if (width > 0 && height > 0) {
+                      setPadSize({ width, height });
+                    }
+                  }}
+                  {...panResponder.panHandlers}
+                >
+                  <Svg width={padSize.width} height={padSize.height} style={styles.signatureOverlay}>
+                    {drawnPaths.map((path, index) => (
+                      <Path
+                        key={`${path}-${index}`}
+                        d={path}
+                        fill="none"
+                        stroke="#1f2a3d"
+                        strokeWidth={2.4}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    ))}
+                    {currentPath ? (
+                      <Path
+                        d={currentPath}
+                        fill="none"
+                        stroke="#1f2a3d"
+                        strokeWidth={2.4}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    ) : null}
+                  </Svg>
+                </View>
+
+                <View style={styles.signaturePadActions}>
+                  <TouchableOpacity style={styles.inlineChip} activeOpacity={0.86} onPress={clearSignaturePad}>
+                    <Text style={styles.inlineChipText}>Effacer le trait</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.inlineChip} activeOpacity={0.86} onPress={saveDrawnSignature}>
+                    <Text style={styles.inlineChipText}>Enregistrer la signature</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : null}
+
+            {signatureDataUri ? (
+              <View style={styles.signaturePreviewWrap}>
+                <SignaturePreview
+                  uri={signatureDataUri}
+                  width="100%"
+                  height="100%"
+                  style={styles.signaturePreview}
+                />
+              </View>
+            ) : null}
+          </BlurView>
+
+          <TouchableOpacity
+            style={styles.generateButton}
+            activeOpacity={0.84}
+            onPress={handleGenerate}
+            accessibilityRole="button"
+            accessibilityLabel="Generer le document"
+            accessibilityHint="Valide le formulaire et ouvre l'aperçu du document"
+            testID="generate-button"
+          >
+            <Send color={Colors.white} size={18} />
+            <Text style={styles.generateText}>Generer le document</Text>
+          </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
-    </View>
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.background,
   },
   flex: {
     flex: 1,
   },
   scrollContent: {
-    paddingBottom: 40,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    gap: 10,
   },
-  section: {
-    paddingHorizontal: 20,
-    paddingTop: 24,
+  headCard: {
+    borderRadius: 22,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.78)",
+    backgroundColor: "rgba(255,255,255,0.36)",
+    overflow: "hidden",
+  },
+  headTitle: {
+    color: Colors.text,
+    fontSize: 19,
+    fontWeight: "800",
+  },
+  headDesc: {
+    marginTop: 6,
+    color: Colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  shortcutCard: {
+    borderRadius: 18,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.74)",
+    backgroundColor: "rgba(255,255,255,0.32)",
+    overflow: "hidden",
+  },
+  shortcutTitle: {
+    color: Colors.text,
+    fontSize: 12,
+    fontWeight: "700",
+    marginBottom: 8,
+  },
+  shortcutRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  shortcutChip: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: "rgba(116,169,255,0.35)",
+    backgroundColor: "rgba(255,255,255,0.76)",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  shortcutText: {
+    fontSize: 12,
+    color: Colors.primary,
+    fontWeight: "700",
+  },
+  sectionCard: {
+    borderRadius: 18,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.76)",
+    backgroundColor: "rgba(255,255,255,0.3)",
+    overflow: "hidden",
+  },
+  sectionTint: {
+    ...StyleSheet.absoluteFillObject,
   },
   sectionLabel: {
-    fontSize: 11,
-    fontWeight: "700" as const,
+    fontSize: 12,
+    textTransform: "uppercase",
+    letterSpacing: 1,
     color: Colors.textMuted,
-    letterSpacing: 1.2,
-    marginBottom: 14,
+    fontWeight: "700",
+    marginBottom: 10,
   },
   inputGroup: {
-    marginBottom: 14,
+    marginBottom: 12,
   },
-  inputLabel: {
-    fontSize: 13,
-    fontWeight: "600" as const,
-    color: Colors.textSecondary,
+  inputLabelRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 6,
     marginBottom: 6,
   },
+  inputLabel: {
+    flex: 1,
+    fontSize: 13,
+    color: Colors.textSecondary,
+    fontWeight: "600",
+  },
+  inlineActions: {
+    flexDirection: "row",
+    gap: 6,
+  },
+  inlineChip: {
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderWidth: 1,
+    borderColor: "rgba(116,169,255,0.34)",
+    backgroundColor: "rgba(255,255,255,0.8)",
+  },
+  inlineChipText: {
+    color: Colors.primary,
+    fontSize: 11,
+    fontWeight: "700",
+  },
   input: {
-    backgroundColor: Colors.surface,
-    borderRadius: 10,
-    padding: 14,
+    borderRadius: 13,
+    backgroundColor: "rgba(255,255,255,0.82)",
+    borderWidth: 1,
+    borderColor: "rgba(107,163,255,0.26)",
+    paddingHorizontal: 14,
+    paddingVertical: 11,
     fontSize: 15,
     color: Colors.text,
-    borderWidth: 1,
-    borderColor: Colors.borderLight,
   },
   multilineInput: {
-    minHeight: 100,
-    paddingTop: 14,
+    minHeight: 104,
+    paddingTop: 11,
+  },
+  helperText: {
+    marginTop: 4,
+    color: Colors.textMuted,
+    fontSize: 11,
   },
   toneGrid: {
     flexDirection: "row",
@@ -282,68 +767,124 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   toneCard: {
-    width: "48%" as const,
-    backgroundColor: Colors.surface,
-    borderRadius: 12,
-    padding: 14,
-    borderWidth: 1.5,
-    borderColor: Colors.borderLight,
+    width: "48%",
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "rgba(107,163,255,0.22)",
+    backgroundColor: "rgba(255,255,255,0.72)",
     flexGrow: 1,
-    flexBasis: "45%" as const,
+    flexBasis: "45%",
   },
   toneCardSelected: {
-    borderColor: Colors.primary,
-    backgroundColor: Colors.primary + "08",
+    borderColor: "rgba(93,167,236,0.75)",
+    backgroundColor: "rgba(193,230,255,0.62)",
   },
   toneCheck: {
     position: "absolute",
-    top: 10,
-    right: 10,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    top: 8,
+    right: 8,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
     backgroundColor: Colors.primary,
     alignItems: "center",
     justifyContent: "center",
   },
   toneLabel: {
-    fontSize: 14,
-    fontWeight: "700" as const,
     color: Colors.text,
-    marginBottom: 2,
+    fontSize: 14,
+    fontWeight: "700",
+    marginBottom: 3,
   },
   toneLabelSelected: {
     color: Colors.primary,
   },
   toneDesc: {
-    fontSize: 11,
     color: Colors.textMuted,
+    fontSize: 11,
   },
   toneDescSelected: {
     color: Colors.primaryLight,
   },
-  generateSection: {
-    padding: 20,
-    paddingTop: 28,
+  signatureActionRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
   },
-  generateButton: {
+  secondaryButton: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(116,169,255,0.3)",
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    backgroundColor: "rgba(255,255,255,0.78)",
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    gap: 6,
+  },
+  secondaryButtonText: {
+    color: Colors.primary,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  signaturePadWrap: {
+    marginTop: 10,
+    gap: 8,
+  },
+  signaturePad: {
+    height: 155,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(116,169,255,0.33)",
+    backgroundColor: "rgba(255,255,255,0.92)",
+    overflow: "hidden",
+  },
+  signatureOverlay: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  signaturePadActions: {
+    flexDirection: "row",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+  signaturePreviewWrap: {
+    marginTop: 10,
+    height: 110,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(116,169,255,0.3)",
+    backgroundColor: "rgba(255,255,255,0.9)",
+    overflow: "hidden",
+  },
+  signaturePreview: {
+    width: "100%",
+    height: "100%",
+  },
+  generateButton: {
+    borderRadius: 16,
     backgroundColor: Colors.primary,
-    borderRadius: 14,
-    paddingVertical: 16,
-    gap: 10,
+    minHeight: 52,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 4,
   },
   generateText: {
-    fontSize: 16,
-    fontWeight: "700" as const,
     color: Colors.white,
+    fontWeight: "700",
+    fontSize: 16,
+  },
+  errorContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: Colors.background,
   },
   errorText: {
-    fontSize: 16,
     color: Colors.error,
-    textAlign: "center",
-    marginTop: 40,
+    fontSize: 16,
+    fontWeight: "700",
   },
 });

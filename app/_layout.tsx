@@ -1,20 +1,20 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { DocumentProvider } from "@/context/DocumentContext";
 import Colors from "@/constants/colors";
+import { DocumentProvider } from "@/context/DocumentContext";
+import { ProfileProvider } from "@/context/ProfileContext";
+import { AppErrorBoundary } from "@/components/AppErrorBoundary";
 
 SplashScreen.preventAutoHideAsync();
-
-const queryClient = new QueryClient();
 
 function RootLayoutNav() {
   return (
     <Stack
       screenOptions={{
         headerBackTitle: "Retour",
+        headerBackButtonDisplayMode: "minimal",
         headerStyle: { backgroundColor: Colors.background },
         headerTintColor: Colors.primary,
         headerShadowVisible: false,
@@ -32,12 +32,14 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <GestureHandlerRootView>
-        <DocumentProvider>
-          <RootLayoutNav />
-        </DocumentProvider>
-      </GestureHandlerRootView>
-    </QueryClientProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <AppErrorBoundary>
+        <ProfileProvider>
+          <DocumentProvider>
+            <RootLayoutNav />
+          </DocumentProvider>
+        </ProfileProvider>
+      </AppErrorBoundary>
+    </GestureHandlerRootView>
   );
 }
