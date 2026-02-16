@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -16,10 +16,9 @@ import { LinearGradient } from "expo-linear-gradient";
 import {
   CheckCircle2,
   Eraser,
-  FilePenLine,
   ImagePlus,
   PenLine,
-  Save,
+  Settings,
   ShieldCheck,
   Sparkles,
   UserCircle2,
@@ -33,6 +32,25 @@ import { useProfile } from "@/context/ProfileContext";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SignaturePreview } from "@/components/SignaturePreview";
 import { UserProfile } from "@/constants/types";
+
+/** Extract SVG path `d` attributes from a data:image/svg+xml URI */
+function extractPathsFromSvgUri(uri: string | undefined): string[] {
+  if (!uri) return [];
+  const prefix = "data:image/svg+xml;utf8,";
+  if (!uri.startsWith(prefix)) return [];
+  try {
+    const svg = decodeURIComponent(uri.slice(prefix.length));
+    const regex = /d="([^"]+)"/g;
+    const paths: string[] = [];
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(svg)) !== null) {
+      paths.push(match[1]);
+    }
+    return paths;
+  } catch {
+    return [];
+  }
+}
 
 function profilesMatch(a: UserProfile, b: UserProfile): boolean {
   return (
@@ -48,19 +66,23 @@ function profilesMatch(a: UserProfile, b: UserProfile): boolean {
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { profile, saveProfile, isLoading, requestApplyToForms, lastFormTemplateId } = useProfile();
+  const { profile, saveProfile, isLoading } = useProfile();
 
   const [draft, setDraft] = useState(profile);
   const [saved, setSaved] = useState(false);
   const [signatureEditorVisible, setSignatureEditorVisible] = useState(false);
-  const [drawnPaths, setDrawnPaths] = useState<string[]>([]);
+  const [drawnPaths, setDrawnPaths] = useState<string[]>(() =>
+    extractPathsFromSvgUri(profile.signatureDataUri)
+  );
   const [currentPath, setCurrentPath] = useState("");
   const pathRef = useRef("");
   const [padSize, setPadSize] = useState({ width: 320, height: 140 });
   const [scrollEnabled, setScrollEnabled] = useState(true);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setDraft(profile);
+    setDrawnPaths(extractPathsFromSvgUri(profile.signatureDataUri));
   }, [profile]);
 
   useEffect(() => {
@@ -68,6 +90,32 @@ export default function ProfileScreen() {
     const timer = setTimeout(() => setSaved(false), 1800);
     return () => clearTimeout(timer);
   }, [saved]);
+
+  // Auto-save: debounce draft changes and persist
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+
+  const autoSave = useCallback(() => {
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(async () => {
+      try {
+        if (!profilesMatch(draftRef.current, profile)) {
+          await saveProfile(draftRef.current);
+          setSaved(true);
+        }
+      } catch (error) {
+        console.error("Auto-save failed", error);
+      }
+    }, 800);
+  }, [profile, saveProfile]);
+
+  // Trigger auto-save whenever draft changes
+  useEffect(() => {
+    autoSave();
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [draft, autoSave]);
 
   const initials = useMemo(() => {
     const fullName = draft.expediteur_nom.trim();
@@ -88,7 +136,8 @@ export default function ProfileScreen() {
     Boolean(draft.lieu);
 
   const hasSignature = Boolean(draft.signatureDataUri);
-  const isDirty = useMemo(() => !profilesMatch(draft, profile), [draft, profile]);
+
+
 
   const completion = useMemo(() => {
     const fields = [
@@ -202,36 +251,7 @@ export default function ProfileScreen() {
     }
   };
 
-  const handleSave = async () => {
-    try {
-      await saveProfile(draft);
-      setSaved(true);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (error) {
-      console.error("Profile save failed", error);
-      Alert.alert("Enregistrement impossible", "Le profil n'a pas pu etre enregistre.");
-    }
-  };
 
-  const handleApplyToCurrentForm = async () => {
-    try {
-      if (isDirty) {
-        await saveProfile(draft);
-        setSaved(true);
-      }
-
-      requestApplyToForms();
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      if (lastFormTemplateId) {
-        router.replace({ pathname: "/form", params: { templateId: lastFormTemplateId } });
-        return;
-      }
-      router.navigate("/(tabs)/(home)");
-    } catch (error) {
-      console.error("Apply profile failed", error);
-      Alert.alert("Application impossible", "Le profil n'a pas pu etre applique au formulaire.");
-    }
-  };
 
   if (isLoading) {
     return (
@@ -275,19 +295,28 @@ export default function ProfileScreen() {
               </View>
 
               <View style={styles.heroTextWrap}>
-                <Text style={styles.heroTitle}>Profil intelligent</Text>
+                <Text style={styles.heroTitle}>Profile</Text>
                 <Text style={styles.heroDesc}>Tes informations sont reutilisees automatiquement.</Text>
               </View>
 
-              <View style={styles.progressWrap}>
-                <Text style={styles.progressValue}>{completion}%</Text>
-              </View>
+              <Pressable
+                style={({ pressed }) => [styles.settingsButton, pressed && styles.pressedButton]}
+                onPress={() => router.push("/(tabs)/profile/settings")}
+                accessibilityRole="button"
+                accessibilityLabel="Paramètres"
+              >
+                <Settings color={Colors.primary} size={20} />
+              </Pressable>
             </View>
 
             <View style={styles.heroBottom}>
               <View style={styles.securePill}>
                 <ShieldCheck color={Colors.primary} size={14} />
                 <Text style={styles.secureText}>Stockage local chiffre</Text>
+              </View>
+
+              <View style={styles.progressWrap}>
+                <Text style={styles.progressValue}>{completion}%</Text>
               </View>
 
               {saved ? (
@@ -298,33 +327,6 @@ export default function ProfileScreen() {
               ) : null}
             </View>
           </BlurView>
-
-          <View style={styles.actionRow}>
-            <Pressable
-              style={({ pressed }) => [styles.applyButton, pressed && styles.pressedButton]}
-              onPress={handleApplyToCurrentForm}
-              accessibilityRole="button"
-              accessibilityLabel="Appliquer le profil au formulaire actuel"
-            >
-              <FilePenLine color={Colors.primary} size={16} />
-              <Text style={styles.applyButtonText}>Appliquer au formulaire actuel</Text>
-            </Pressable>
-
-            <Pressable
-              style={({ pressed }) => [
-                styles.saveButton,
-                !isDirty && styles.saveButtonDisabled,
-                pressed && isDirty && styles.pressedButton,
-              ]}
-              onPress={handleSave}
-              disabled={!isDirty}
-              accessibilityRole="button"
-              accessibilityLabel="Enregistrer le profil"
-            >
-              <Save color={Colors.white} size={16} />
-              <Text style={styles.saveText}>{isDirty ? "Enregistrer" : "A jour"}</Text>
-            </Pressable>
-          </View>
 
           {!hasIdentityData ? (
             <BlurView intensity={24} tint="light" style={styles.emptyStateCard}>
@@ -603,44 +605,15 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "700",
   },
-  actionRow: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  applyButton: {
-    flex: 1,
-    minHeight: 48,
+  settingsButton: {
+    width: 42,
+    height: 42,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: "rgba(116,169,255,0.34)",
-    backgroundColor: "rgba(255,255,255,0.86)",
+    backgroundColor: "rgba(255,255,255,0.78)",
     alignItems: "center",
     justifyContent: "center",
-    flexDirection: "row",
-    gap: 7,
-  },
-  applyButtonText: {
-    color: Colors.primary,
-    fontWeight: "800",
-    fontSize: 12,
-  },
-  saveButton: {
-    minHeight: 48,
-    borderRadius: 14,
-    backgroundColor: Colors.primary,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 6,
-    paddingHorizontal: 14,
-  },
-  saveButtonDisabled: {
-    opacity: 0.55,
-  },
-  saveText: {
-    color: Colors.white,
-    fontWeight: "800",
-    fontSize: 13,
   },
   pressedButton: {
     opacity: 0.82,
