@@ -9,14 +9,14 @@ export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors.primary,
+        tabBarActiveTintColor: Colors.accent,
         tabBarInactiveTintColor: Colors.textMuted,
         headerShown: false,
         tabBarHideOnKeyboard: true,
         tabBarBackground: () => <BlurView intensity={34} tint="light" style={styles.tabBackground} />,
         tabBarStyle: {
           backgroundColor: "transparent",
-          borderTopColor: "rgba(141,169,208,0.24)",
+          borderTopColor: "rgba(200,180,150,0.22)",
           borderTopWidth: StyleSheet.hairlineWidth,
           height: 62,
           paddingTop: 6,
@@ -56,6 +56,6 @@ export default function TabLayout() {
 const styles = StyleSheet.create({
   tabBackground: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(255,255,255,0.72)",
+    backgroundColor: "rgba(253,248,243,0.85)",
   },
 });

@@ -18,9 +18,11 @@ import {
   Eraser,
   ImagePlus,
   PenLine,
+  Plus,
   Settings,
   ShieldCheck,
   Sparkles,
+  Trash2,
   UserCircle2,
 } from "lucide-react-native";
 import * as ImagePicker from "expo-image-picker";
@@ -32,6 +34,7 @@ import { useProfile } from "@/context/ProfileContext";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SignaturePreview } from "@/components/SignaturePreview";
 import { UserProfile } from "@/constants/types";
+import { smoothRawPath } from "@/utils/signatureSmoothing";
 
 /** Extract SVG path `d` attributes from a data:image/svg+xml URI */
 function extractPathsFromSvgUri(uri: string | undefined): string[] {
@@ -66,8 +69,9 @@ function profilesMatch(a: UserProfile, b: UserProfile): boolean {
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { profile, saveProfile, isLoading } = useProfile();
+  const { profile, saveProfile, isLoading, profiles, activeProfileId, switchProfile, addProfile, deleteProfile } = useProfile();
 
+  // ── State ──────────────────────────────────────────────────
   const [draft, setDraft] = useState(profile);
   const [saved, setSaved] = useState(false);
   const [signatureEditorVisible, setSignatureEditorVisible] = useState(false);
@@ -80,9 +84,26 @@ export default function ProfileScreen() {
   const [scrollEnabled, setScrollEnabled] = useState(true);
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // ── Profile sync (ONE-SHOT: only on initial load) ────────
+  // Only load the signature from the profile ONCE.
+  // After that, the local editor state is the source of truth.
+  const hasLoadedSignatureRef = useRef(false);
+
   useEffect(() => {
-    setDraft(profile);
-    setDrawnPaths(extractPathsFromSvgUri(profile.signatureDataUri));
+    // Always update draft text fields (name, changes, etc.)
+    setDraft((prev) => ({
+      ...prev,
+      ...profile,
+      // PRESERVE local signature state - do not overwrite with profile's
+      signatureDataUri: prev.signatureDataUri,
+    }));
+
+    // Only load drawing paths if we haven't done so yet AND there is something to load
+    if (!hasLoadedSignatureRef.current && profile.signatureDataUri) {
+      setDrawnPaths(extractPathsFromSvgUri(profile.signatureDataUri));
+      setDraft(d => ({ ...d, signatureDataUri: profile.signatureDataUri }));
+      hasLoadedSignatureRef.current = true;
+    }
   }, [profile]);
 
   useEffect(() => {
@@ -91,7 +112,7 @@ export default function ProfileScreen() {
     return () => clearTimeout(timer);
   }, [saved]);
 
-  // Auto-save: debounce draft changes and persist
+  // ── Auto-save (debounced, non-destructive) ────────────────
   const draftRef = useRef(draft);
   draftRef.current = draft;
 
@@ -153,11 +174,16 @@ export default function ProfileScreen() {
     return Math.round((filled / fields.length) * 100);
   }, [draft]);
 
+  // ── Signature PanResponder ────────────────────────────────
   const panResponder = useMemo(
     () =>
       PanResponder.create({
         onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: () => true,
+        // Capture phase: claim gesture BEFORE ScrollView can steal it
+        onStartShouldSetPanResponderCapture: () => true,
+        onMoveShouldSetPanResponderCapture: () => true,
+        onShouldBlockNativeResponder: () => true,
         onPanResponderGrant: (event) => {
           setScrollEnabled(false);
           const x = event.nativeEvent.locationX.toFixed(1);
@@ -176,7 +202,8 @@ export default function ProfileScreen() {
         },
         onPanResponderRelease: () => {
           if (pathRef.current) {
-            setDrawnPaths((prev) => [...prev, pathRef.current]);
+            const smoothed = smoothRawPath(pathRef.current);
+            setDrawnPaths((prev) => [...prev, smoothed]);
           }
           pathRef.current = "";
           setCurrentPath("");
@@ -184,7 +211,8 @@ export default function ProfileScreen() {
         },
         onPanResponderTerminate: () => {
           if (pathRef.current) {
-            setDrawnPaths((prev) => [...prev, pathRef.current]);
+            const smoothed = smoothRawPath(pathRef.current);
+            setDrawnPaths((prev) => [...prev, smoothed]);
           }
           pathRef.current = "";
           setCurrentPath("");
@@ -200,8 +228,13 @@ export default function ProfileScreen() {
     pathRef.current = "";
   };
 
-  const saveDrawnSignatureToDraft = () => {
-    const allPaths = [...drawnPaths, currentPath].filter((path) => path.trim().length > 0);
+  const undoLastStroke = () => {
+    setDrawnPaths((prev) => prev.slice(0, -1));
+  };
+
+  // ── Save signature: generate SVG → update draft → persist ─
+  const saveDrawnSignatureToDraft = useCallback(() => {
+    const allPaths = [...drawnPaths, currentPath].filter((p) => p.trim().length > 0);
     if (allPaths.length === 0) return;
 
     const width = Math.max(220, Math.round(padSize.width));
@@ -209,20 +242,18 @@ export default function ProfileScreen() {
     const pathTags = allPaths
       .map(
         (path) =>
-          `<path d=\"${path}\" fill=\"none\" stroke=\"#1f2a3d\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>`
+          `<path d="${path}" fill="none" stroke="#1f2a3d" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>`
       )
       .join("");
 
-    const svg = `<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"${width}\" height=\"${height}\" viewBox=\"0 0 ${width} ${height}\"><rect width=\"100%\" height=\"100%\" fill=\"white\"/>${pathTags}</svg>`;
-    const uri = `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="white"/>${pathTags}</svg>`;
+    const dataUri = `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 
-    setDraft((prev) => ({ ...prev, signatureDataUri: uri }));
-    setSignatureEditorVisible(false);
-    setDrawnPaths(allPaths);
-    setCurrentPath("");
-    pathRef.current = "";
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-  };
+    // Update draft AND our ref to prevent reload loops
+    setDraft((prev) => ({ ...prev, signatureDataUri: dataUri }));
+    // We generated it, so we consider it "loaded" / "current"
+    hasLoadedSignatureRef.current = true;
+  }, [drawnPaths, currentPath, padSize]);
 
   const importSignature = async () => {
     try {
@@ -253,6 +284,59 @@ export default function ProfileScreen() {
 
 
 
+  const handleSwitchProfile = useCallback(
+    (id: string) => {
+      if (id === activeProfileId) return;
+      // Save current draft first
+      if (!profilesMatch(draft, profile)) {
+        saveProfile(draft);
+      }
+      switchProfile(id);
+    },
+    [activeProfileId, draft, profile, saveProfile, switchProfile]
+  );
+
+  const handleAddProfile = useCallback(() => {
+    Alert.prompt(
+      "Nouveau profil",
+      "Nom du profil (ex: Pro, Conjoint)",
+      [
+        { text: "Annuler", style: "cancel" },
+        {
+          text: "Cr\u00e9er",
+          onPress: (label?: string) => {
+            if (label?.trim()) addProfile(label.trim());
+          },
+        },
+      ],
+      "plain-text"
+    );
+  }, [addProfile]);
+
+  const handleDeleteProfile = useCallback(
+    (id: string, label: string) => {
+      if (profiles.length <= 1) {
+        Alert.alert("Impossible", "Tu ne peux pas supprimer ton dernier profil.");
+        return;
+      }
+      Alert.alert("Supprimer", `Supprimer le profil "${label}" ?`, [
+        { text: "Annuler", style: "cancel" },
+        {
+          text: "Supprimer",
+          style: "destructive",
+          onPress: () => deleteProfile(id),
+        },
+      ]);
+    },
+    [profiles.length, deleteProfile]
+  );
+
+  // Reload draft when active profile changes
+  useEffect(() => {
+    setDraft(profile);
+    setDrawnPaths(extractPathsFromSvgUri(profile.signatureDataUri));
+  }, [activeProfileId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (isLoading) {
     return (
       <View style={styles.loadingContainer}>
@@ -263,7 +347,7 @@ export default function ProfileScreen() {
 
   return (
     <LinearGradient
-      colors={["#FFF8F4", "#F2F9FF", "#F8FFF5"]}
+      colors={["#FDFBF7", "#FFF8F0", "#FDFBF7"]}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={styles.container}
@@ -301,7 +385,7 @@ export default function ProfileScreen() {
 
               <Pressable
                 style={({ pressed }) => [styles.settingsButton, pressed && styles.pressedButton]}
-                onPress={() => router.push("/(tabs)/profile/settings")}
+                onPress={() => router.push("/profile/settings")}
                 accessibilityRole="button"
                 accessibilityLabel="Paramètres"
               >
@@ -327,6 +411,30 @@ export default function ProfileScreen() {
               ) : null}
             </View>
           </BlurView>
+
+          {/* Profile switcher */}
+          <View style={styles.profileSwitcherRow}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+              {profiles.map((entry) => {
+                const isActive = entry.id === activeProfileId;
+                return (
+                  <Pressable
+                    key={entry.id}
+                    style={[styles.profilePill, isActive && styles.profilePillActive]}
+                    onPress={() => handleSwitchProfile(entry.id)}
+                    onLongPress={() => handleDeleteProfile(entry.id, entry.label)}
+                  >
+                    <Text style={[styles.profilePillText, isActive && styles.profilePillTextActive]}>
+                      {entry.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+              <Pressable style={styles.profileAddPill} onPress={handleAddProfile}>
+                <Plus color={Colors.primary} size={14} />
+              </Pressable>
+            </ScrollView>
+          </View>
 
           {!hasIdentityData ? (
             <BlurView intensity={24} tint="light" style={styles.emptyStateCard}>
@@ -409,15 +517,24 @@ export default function ProfileScreen() {
 
               <Pressable
                 style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressedButton]}
-                onPress={() => setSignatureEditorVisible((prev) => !prev)}
+                onPress={() => {
+                  if (signatureEditorVisible) {
+                    // Save drawing before closing
+                    saveDrawnSignatureToDraft();
+                  }
+                  setSignatureEditorVisible((prev) => !prev);
+                }}
               >
                 <PenLine color={Colors.primary} size={16} />
-                <Text style={styles.secondaryButtonText}>{signatureEditorVisible ? "Masquer" : "Dessiner"}</Text>
+                <Text style={styles.secondaryButtonText}>{signatureEditorVisible ? "Terminer" : "Dessiner"}</Text>
               </Pressable>
 
               <Pressable
                 style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressedButton]}
-                onPress={() => setDraft((prev) => ({ ...prev, signatureDataUri: undefined }))}
+                onPress={() => {
+                  setDrawnPaths([]);
+                  setDraft((prev) => ({ ...prev, signatureDataUri: undefined }));
+                }}
                 disabled={!draft.signatureDataUri}
               >
                 <Eraser color={Colors.primary} size={16} />
@@ -461,14 +578,20 @@ export default function ProfileScreen() {
                 </View>
 
                 <View style={styles.signaturePadActions}>
+                  <Pressable style={({ pressed }) => [styles.inlineChip, pressed && styles.pressedButton]} onPress={undoLastStroke} disabled={drawnPaths.length === 0}>
+                    <Text style={styles.inlineChipText}>Annuler</Text>
+                  </Pressable>
                   <Pressable style={({ pressed }) => [styles.inlineChip, pressed && styles.pressedButton]} onPress={clearSignaturePad}>
                     <Text style={styles.inlineChipText}>Effacer</Text>
                   </Pressable>
                   <Pressable
                     style={({ pressed }) => [styles.inlineChip, pressed && styles.pressedButton]}
-                    onPress={saveDrawnSignatureToDraft}
+                    onPress={() => {
+                      saveDrawnSignatureToDraft();
+                      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                    }}
                   >
-                    <Text style={styles.inlineChipText}>Valider le dessin</Text>
+                    <Text style={styles.inlineChipText}>Valider</Text>
                   </Pressable>
                 </View>
               </View>
@@ -581,8 +704,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderWidth: 1,
-    borderColor: "rgba(116,169,255,0.36)",
-    backgroundColor: "rgba(255,255,255,0.8)",
+    borderColor: "rgba(230,200,170,0.30)",
+    backgroundColor: "rgba(255,250,245,0.85)",
   },
   secureText: {
     color: Colors.primary,
@@ -610,8 +733,8 @@ const styles = StyleSheet.create({
     height: 42,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: "rgba(116,169,255,0.34)",
-    backgroundColor: "rgba(255,255,255,0.78)",
+    borderColor: "rgba(230,200,170,0.28)",
+    backgroundColor: Colors.accentSoft,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -622,8 +745,8 @@ const styles = StyleSheet.create({
   emptyStateCard: {
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.72)",
-    backgroundColor: "rgba(255,255,255,0.34)",
+    borderColor: "rgba(230,200,170,0.28)",
+    backgroundColor: "rgba(255,250,245,0.55)",
     overflow: "hidden",
     padding: 12,
     flexDirection: "row",
@@ -647,8 +770,8 @@ const styles = StyleSheet.create({
   sectionCard: {
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.76)",
-    backgroundColor: "rgba(255,255,255,0.3)",
+    borderColor: "rgba(230,200,170,0.28)",
+    backgroundColor: "rgba(255,250,245,0.48)",
     overflow: "hidden",
     padding: 14,
   },
@@ -691,16 +814,16 @@ const styles = StyleSheet.create({
   secondaryButton: {
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "rgba(116,169,255,0.3)",
+    borderColor: "rgba(230,200,170,0.28)",
     paddingHorizontal: 11,
     paddingVertical: 8,
-    backgroundColor: "rgba(255,255,255,0.78)",
+    backgroundColor: Colors.accentSoft,
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
   },
   secondaryButtonText: {
-    color: Colors.primary,
+    color: Colors.accent,
     fontSize: 12,
     fontWeight: "700",
   },
@@ -712,8 +835,8 @@ const styles = StyleSheet.create({
     height: 150,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "rgba(116,169,255,0.33)",
-    backgroundColor: "rgba(255,255,255,0.92)",
+    borderColor: "rgba(230,200,170,0.30)",
+    backgroundColor: "rgba(255,250,245,0.95)",
     overflow: "hidden",
   },
   signatureOverlay: {
@@ -728,8 +851,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 9,
     paddingVertical: 6,
     borderWidth: 1,
-    borderColor: "rgba(116,169,255,0.34)",
-    backgroundColor: "rgba(255,255,255,0.8)",
+    borderColor: "rgba(230,176,100,0.28)",
+    backgroundColor: "rgba(255,250,245,0.85)",
   },
   inlineChipText: {
     color: Colors.primary,
@@ -741,8 +864,8 @@ const styles = StyleSheet.create({
     height: 104,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "rgba(116,169,255,0.3)",
-    backgroundColor: "rgba(255,255,255,0.9)",
+    borderColor: "rgba(230,200,170,0.30)",
+    backgroundColor: "rgba(255,250,245,0.92)",
     overflow: "hidden",
   },
   signaturePreview: {
@@ -755,8 +878,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderStyle: "dashed",
-    borderColor: "rgba(116,169,255,0.3)",
-    backgroundColor: "rgba(255,255,255,0.74)",
+    borderColor: "rgba(230,200,170,0.30)",
+    backgroundColor: "rgba(255,250,245,0.80)",
     justifyContent: "center",
     paddingHorizontal: 12,
   },
@@ -780,5 +903,39 @@ const styles = StyleSheet.create({
   loadingText: {
     color: Colors.textSecondary,
     fontWeight: "600",
+  },
+  profileSwitcherRow: {
+    paddingHorizontal: 2,
+  },
+  profilePill: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 99,
+    backgroundColor: "rgba(255,255,255,0.75)",
+    borderWidth: 1.5,
+    borderColor: "rgba(200,180,150,0.25)",
+  },
+  profilePillActive: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  profilePillText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: Colors.textSecondary,
+  },
+  profilePillTextActive: {
+    color: Colors.white,
+  },
+  profileAddPill: {
+    width: 36,
+    height: 36,
+    borderRadius: 99,
+    borderWidth: 1.5,
+    borderColor: "rgba(200,180,150,0.3)",
+    borderStyle: "dashed" as const,
+    alignItems: "center",
+    justifyContent: "center",
+    alignSelf: "center",
   },
 });

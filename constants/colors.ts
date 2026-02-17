@@ -1,26 +1,34 @@
 const Colors = {
-  primary: "#22416A",
-  primaryLight: "#3A669D",
-  primaryDark: "#14263F",
-  accent: "#7DBAA4",
-  accentLight: "#BFE6D8",
-  accentSoft: "#E9F7F1",
-  background: "#F5F8FC",
-  surface: "rgba(255,255,255,0.78)",
-  surfaceAlt: "rgba(255,255,255,0.62)",
-  text: "#1F2A3D",
-  textSecondary: "#4E607E",
-  textMuted: "#7385A3",
-  border: "rgba(147,174,215,0.36)",
-  borderLight: "rgba(255,255,255,0.72)",
-  success: "#2D8B68",
-  successLight: "#E8F7EF",
-  warning: "#D28F37",
-  warningLight: "#FFF5E4",
-  error: "#C95858",
-  errorLight: "#FDEDED",
+  primary: "#22416A", // Navy Blue (Keep for contrast)
+  primaryDark: "#1A3254",
+  primaryLight: "#4B7CCA",
+
+  // New Warm/Beige Palette
+  background: "#FDFBF7", // Cream / Warm Beige
+  surface: "#FFFFFF",
+  surfaceAlt: "#FFF8F0",
+
+  // Accents for "Pop"
+  accent: "#E67E22", // Burnt Orange (Vibrant)
+  accentLight: "#F5B041", // Gold/Amber
+  accentSoft: "#FEF3C7", // Pale Gold
+
+  text: "#1F2937", // Charcoal (Softer than black)
+  textSecondary: "#4B5563", // Gray-600
+  textMuted: "#9CA3AF", // Gray-400
+
+  border: "#E5E7EB",
+  borderLight: "#F3F4F6",
+
+  success: "#10B981",
+  successLight: "#D1FAE5",
+  warning: "#F59E0B",
+  warningLight: "#FEF3C7",
+  error: "#EF4444",
+  errorLight: "#FEE2E2",
+
   white: "#FFFFFF",
-  overlay: "rgba(255,255,255,0.2)",
+  overlay: "rgba(34, 65, 106, 0.2)",
 };
 
 export default Colors;

@@ -15,7 +15,7 @@ import * as ImagePicker from "expo-image-picker";
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
-import { Check, Eraser, ImagePlus, PenLine, Send, Sparkles, UserRound } from "lucide-react-native";
+import { BookUser, Check, Eraser, Eye, ImagePlus, PenLine, Send, Sparkles, UserRound } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
@@ -33,12 +33,17 @@ import { useProfile } from "@/context/ProfileContext";
 import { generateDocument, validateTemplateValues } from "@/utils/documentGenerator";
 import { createDocumentId } from "@/utils/ids";
 import { SignaturePreview } from "@/components/SignaturePreview";
+import { smoothRawPath } from "@/utils/signatureSmoothing";
+import { PdfPreviewModal } from "@/components/PdfPreviewModal";
+import { GeneratedDocument } from "@/constants/types";
+import { AddressBookModal } from "@/components/AddressBookModal";
+import { SavedContact } from "@/context/AddressBookContext";
 
 const SECTION_TINTS: Record<string, [string, string]> = {
-  expediteur: ["rgba(181,220,255,0.52)", "rgba(240,249,255,0.2)"],
-  destinataire: ["rgba(255,218,208,0.52)", "rgba(255,247,244,0.2)"],
-  demande: ["rgba(206,240,206,0.5)", "rgba(248,255,248,0.2)"],
-  pieces: ["rgba(255,236,194,0.54)", "rgba(255,252,241,0.2)"],
+  expediteur: ["rgba(230,176,100,0.25)", "rgba(255,248,240,0.2)"],
+  destinataire: ["rgba(255,200,170,0.28)", "rgba(255,247,244,0.2)"],
+  demande: ["rgba(200,220,180,0.28)", "rgba(248,255,248,0.15)"],
+  pieces: ["rgba(245,220,180,0.30)", "rgba(255,252,241,0.15)"],
 };
 
 function getFrenchToday(): string {
@@ -213,6 +218,9 @@ export default function FormScreen() {
       PanResponder.create({
         onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: () => true,
+        onStartShouldSetPanResponderCapture: () => true,
+        onMoveShouldSetPanResponderCapture: () => true,
+        onShouldBlockNativeResponder: () => true,
         onPanResponderGrant: (event) => {
           setFormScrollEnabled(false);
           const x = event.nativeEvent.locationX.toFixed(1);
@@ -231,14 +239,16 @@ export default function FormScreen() {
         },
         onPanResponderRelease: () => {
           if (!pathRef.current) return;
-          setDrawnPaths((prev) => [...prev, pathRef.current]);
+          const smoothed = smoothRawPath(pathRef.current);
+          setDrawnPaths((prev) => [...prev, smoothed]);
           pathRef.current = "";
           setCurrentPath("");
           setFormScrollEnabled(true);
         },
         onPanResponderTerminate: () => {
           if (pathRef.current) {
-            setDrawnPaths((prev) => [...prev, pathRef.current]);
+            const smoothed = smoothRawPath(pathRef.current);
+            setDrawnPaths((prev) => [...prev, smoothed]);
           }
           pathRef.current = "";
           setCurrentPath("");
@@ -252,6 +262,10 @@ export default function FormScreen() {
     setDrawnPaths([]);
     setCurrentPath("");
     pathRef.current = "";
+  }, []);
+
+  const undoLastStroke = useCallback(() => {
+    setDrawnPaths((prev) => prev.slice(0, -1));
   }, []);
 
   const saveDrawnSignature = useCallback(() => {
@@ -338,6 +352,58 @@ export default function FormScreen() {
     router.push({ pathname: "/preview", params: { documentId: id } });
   }, [addDocument, result, router, signatureDataUri, tone, values]);
 
+  // ── Preview ───────────────────────────────────────────────
+  const [previewVisible, setPreviewVisible] = useState(false);
+  const [previewDoc, setPreviewDoc] = useState<GeneratedDocument | null>(null);
+
+  const handlePreview = useCallback(() => {
+    if (!result) return;
+    const errors = validateTemplateValues(result.template, values);
+    if (errors.length > 0) {
+      Alert.alert("Champs à compléter", errors.slice(0, 3).join("\n"));
+      return;
+    }
+    const content = generateDocument(result.template, values, tone);
+    setPreviewDoc({
+      id: "preview",
+      templateId: result.template.id,
+      templateVersion: result.template.version,
+      templateTitle: result.template.title,
+      categoryTitle: result.category.title,
+      content,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      values,
+      tone,
+      signatureDataUri,
+    });
+    setPreviewVisible(true);
+  }, [result, values, tone, signatureDataUri]);
+
+  // ── Address book ──────────────────────────────────────────
+  const [addressBookVisible, setAddressBookVisible] = useState(false);
+
+  const handleContactSelect = useCallback(
+    (contact: SavedContact) => {
+      setValues((prev) => {
+        const next = { ...prev };
+        // Map contact fields to form destinataire fields
+        const fields = result?.template.fields ?? [];
+        for (const f of fields) {
+          if (f.section === "destinataire") {
+            if (f.id.toLowerCase().includes("nom") && contact.nom) next[f.id] = contact.nom;
+            else if (f.id.toLowerCase().includes("adresse") && contact.adresse) next[f.id] = contact.adresse;
+            else if (f.id.toLowerCase().includes("email") && contact.email) next[f.id] = contact.email;
+            else if (f.id.toLowerCase().includes("tel") && contact.tel) next[f.id] = contact.tel;
+          }
+        }
+        return next;
+      });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    },
+    [result]
+  );
+
   if (!result) {
     return (
       <View style={styles.errorContainer}>
@@ -348,7 +414,7 @@ export default function FormScreen() {
 
   return (
     <LinearGradient
-      colors={["#FFF8F4", "#F2F9FF", "#F8FFF5"]}
+      colors={["#FDF8F3", "#FFF5EC", "#FDF8F3"]}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={styles.container}
@@ -405,7 +471,18 @@ export default function FormScreen() {
                 disabled={!latestFilledDocument}
               >
                 <UserRound color={Colors.primary} size={14} />
-                <Text style={styles.shortcutText}>Dernier destinataire</Text>
+                <Text style={styles.shortcutText}>Dernier dest.</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.shortcutChip}
+                onPress={() => setAddressBookVisible(true)}
+                activeOpacity={0.86}
+                accessibilityRole="button"
+                accessibilityLabel="Ouvrir le carnet d'adresses"
+              >
+                <BookUser color={Colors.primary} size={14} />
+                <Text style={styles.shortcutText}>Carnet</Text>
               </TouchableOpacity>
             </View>
           </BlurView>
@@ -584,11 +661,14 @@ export default function FormScreen() {
                 </View>
 
                 <View style={styles.signaturePadActions}>
+                  <TouchableOpacity style={styles.inlineChip} activeOpacity={0.86} onPress={undoLastStroke} disabled={drawnPaths.length === 0}>
+                    <Text style={styles.inlineChipText}>Annuler</Text>
+                  </TouchableOpacity>
                   <TouchableOpacity style={styles.inlineChip} activeOpacity={0.86} onPress={clearSignaturePad}>
-                    <Text style={styles.inlineChipText}>Effacer le trait</Text>
+                    <Text style={styles.inlineChipText}>Effacer</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.inlineChip} activeOpacity={0.86} onPress={saveDrawnSignature}>
-                    <Text style={styles.inlineChipText}>Enregistrer la signature</Text>
+                    <Text style={styles.inlineChipText}>Valider</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -606,20 +686,44 @@ export default function FormScreen() {
             ) : null}
           </BlurView>
 
-          <TouchableOpacity
-            style={styles.generateButton}
-            activeOpacity={0.84}
-            onPress={handleGenerate}
-            accessibilityRole="button"
-            accessibilityLabel="Generer le document"
-            accessibilityHint="Valide le formulaire et ouvre l'aperçu du document"
-            testID="generate-button"
-          >
-            <Send color={Colors.white} size={18} />
-            <Text style={styles.generateText}>Generer le document</Text>
-          </TouchableOpacity>
+          <View style={styles.generateRow}>
+            <TouchableOpacity
+              style={styles.previewButton}
+              activeOpacity={0.84}
+              onPress={handlePreview}
+              accessibilityRole="button"
+              accessibilityLabel="Aperçu du document"
+              testID="preview-button"
+            >
+              <Eye color={Colors.accent} size={18} />
+              <Text style={styles.previewText}>Aperçu</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.generateButton}
+              activeOpacity={0.84}
+              onPress={handleGenerate}
+              accessibilityRole="button"
+              accessibilityLabel="Generer le document"
+              testID="generate-button"
+            >
+              <Send color={Colors.white} size={18} />
+              <Text style={styles.generateText}>Générer</Text>
+            </TouchableOpacity>
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <PdfPreviewModal
+        visible={previewVisible}
+        onClose={() => setPreviewVisible(false)}
+        document={previewDoc}
+      />
+      <AddressBookModal
+        visible={addressBookVisible}
+        onClose={() => setAddressBookVisible(false)}
+        onSelect={handleContactSelect}
+      />
     </LinearGradient>
   );
 }
@@ -640,8 +744,8 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     padding: 18,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.78)",
-    backgroundColor: "rgba(255,255,255,0.36)",
+    borderColor: "rgba(230,200,170,0.30)",
+    backgroundColor: "rgba(255,250,245,0.55)",
     overflow: "hidden",
   },
   headTitle: {
@@ -659,8 +763,8 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     padding: 12,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.74)",
-    backgroundColor: "rgba(255,255,255,0.32)",
+    borderColor: "rgba(230,200,170,0.28)",
+    backgroundColor: "rgba(255,250,245,0.50)",
     overflow: "hidden",
   },
   shortcutTitle: {
@@ -679,8 +783,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 7,
     borderWidth: 1,
-    borderColor: "rgba(116,169,255,0.35)",
-    backgroundColor: "rgba(255,255,255,0.76)",
+    borderColor: "rgba(230,176,100,0.28)",
+    backgroundColor: "rgba(255,250,245,0.8)",
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
@@ -694,8 +798,8 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     padding: 14,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.76)",
-    backgroundColor: "rgba(255,255,255,0.3)",
+    borderColor: "rgba(230,200,170,0.28)",
+    backgroundColor: "rgba(255,250,245,0.48)",
     overflow: "hidden",
   },
   sectionTint: {
@@ -734,8 +838,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 9,
     paddingVertical: 5,
     borderWidth: 1,
-    borderColor: "rgba(116,169,255,0.34)",
-    backgroundColor: "rgba(255,255,255,0.8)",
+    borderColor: "rgba(230,176,100,0.28)",
+    backgroundColor: "rgba(255,250,245,0.85)",
   },
   inlineChipText: {
     color: Colors.primary,
@@ -744,9 +848,9 @@ const styles = StyleSheet.create({
   },
   input: {
     borderRadius: 13,
-    backgroundColor: "rgba(255,255,255,0.82)",
+    backgroundColor: "rgba(255,250,245,0.90)",
     borderWidth: 1,
-    borderColor: "rgba(107,163,255,0.26)",
+    borderColor: "rgba(230,200,170,0.22)",
     paddingHorizontal: 14,
     paddingVertical: 11,
     fontSize: 15,
@@ -771,14 +875,14 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 12,
     borderWidth: 1,
-    borderColor: "rgba(107,163,255,0.22)",
-    backgroundColor: "rgba(255,255,255,0.72)",
+    borderColor: "rgba(230,200,170,0.22)",
+    backgroundColor: "rgba(255,250,245,0.8)",
     flexGrow: 1,
     flexBasis: "45%",
   },
   toneCardSelected: {
-    borderColor: "rgba(93,167,236,0.75)",
-    backgroundColor: "rgba(193,230,255,0.62)",
+    borderColor: Colors.accent,
+    backgroundColor: Colors.accentSoft,
   },
   toneCheck: {
     position: "absolute",
@@ -815,10 +919,10 @@ const styles = StyleSheet.create({
   secondaryButton: {
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "rgba(116,169,255,0.3)",
+    borderColor: "rgba(230,200,170,0.28)",
     paddingHorizontal: 11,
     paddingVertical: 8,
-    backgroundColor: "rgba(255,255,255,0.78)",
+    backgroundColor: Colors.accentSoft,
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
@@ -836,8 +940,8 @@ const styles = StyleSheet.create({
     height: 155,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "rgba(116,169,255,0.33)",
-    backgroundColor: "rgba(255,255,255,0.92)",
+    borderColor: "rgba(230,200,170,0.30)",
+    backgroundColor: "rgba(255,250,245,0.95)",
     overflow: "hidden",
   },
   signatureOverlay: {
@@ -853,23 +957,45 @@ const styles = StyleSheet.create({
     height: 110,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "rgba(116,169,255,0.3)",
-    backgroundColor: "rgba(255,255,255,0.9)",
+    borderColor: "rgba(230,200,170,0.30)",
+    backgroundColor: "rgba(255,250,245,0.92)",
     overflow: "hidden",
   },
   signaturePreview: {
     width: "100%",
     height: "100%",
   },
-  generateButton: {
+  generateRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 4,
+  },
+  previewButton: {
+    flex: 1,
     borderRadius: 16,
-    backgroundColor: Colors.primary,
+    backgroundColor: "rgba(255,250,245,0.85)",
+    borderWidth: 1.5,
+    borderColor: "rgba(230,176,100,0.45)",
+    minHeight: 52,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 6,
+  },
+  previewText: {
+    color: Colors.accent,
+    fontWeight: "700",
+    fontSize: 15,
+  },
+  generateButton: {
+    flex: 2,
+    borderRadius: 16,
+    backgroundColor: Colors.accent,
     minHeight: 52,
     flexDirection: "row",
     justifyContent: "center",
     alignItems: "center",
     gap: 8,
-    marginTop: 4,
   },
   generateText: {
     color: Colors.white,

@@ -3,37 +3,127 @@ import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 import { GeneratedDocument } from "@/constants/types";
 
-function escapeHtml(value: string): string {
+/* ── Helpers ──────────────────────────────────────────────── */
+
+function esc(value: string): string {
   return value
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
+    .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 }
 
-function toParagraphHtml(content: string): string {
-  const chunks = content
-    .split(/\n{2,}/)
-    .map((part) => part.trim())
-    .filter(Boolean);
+/**
+ * Convert the plain-text body into structured HTML.
+ * The generated document content already contains the full letter
+ * (header, subject, paragraphs, closing, name). We split it into
+ * sections to apply the formal layout.
+ */
+function parseContent(content: string): {
+  senderLines: string[];
+  recipientLines: string[];
+  dateLine: string;
+  subjectLine: string;
+  bodyParagraphs: string[];
+  closingName: string;
+} {
+  const blocks = content.split(/\n{2,}/).map((b) => b.trim()).filter(Boolean);
 
-  return chunks
-    .map((chunk, index) => {
-      const safe = escapeHtml(chunk).replace(/\n/g, "<br />");
-      const extraClass = index === 0 ? " paragraph-intro" : "";
-      return `<p class=\"paragraph${extraClass}\">${safe}</p>`;
-    })
-    .join("\n");
+  const senderLines: string[] = [];
+  const recipientLines: string[] = [];
+  let dateLine = "";
+  let subjectLine = "";
+  const bodyParagraphs: string[] = [];
+  let closingName = "";
+
+  let phase: "sender" | "recipient" | "body" = "sender";
+
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i];
+
+    // Detect "A [lieu], le [date]" line
+    if (/^[AÀ]\s+.+,\s*(le\s+)?/i.test(block) && !dateLine) {
+      dateLine = block;
+      phase = "body";
+      continue;
+    }
+
+    // Detect "Objet :" line
+    if (/^Objet\s*:/i.test(block)) {
+      subjectLine = block;
+      phase = "body";
+      continue;
+    }
+
+    // In sender phase — first block(s) are sender info
+    if (phase === "sender") {
+      // If it looks like a person/company block (no "Madame" etc.), it's sender or recipient
+      const lines = block.split("\n").map((l) => l.trim()).filter(Boolean);
+
+      // Heuristic: if we already have sender lines and this block doesn't start
+      // with a greeting like "Madame", treat it as recipient
+      if (senderLines.length > 0 && !block.match(/^(Madame|Monsieur|Cher|Chère)/i)) {
+        recipientLines.push(...lines);
+        phase = "body";
+        continue;
+      }
+
+      senderLines.push(...lines);
+      continue;
+    }
+
+    // Body paragraphs
+    bodyParagraphs.push(block);
+  }
+
+  // Last body paragraph could be the sender name (short, no period)
+  if (bodyParagraphs.length > 1) {
+    const last = bodyParagraphs[bodyParagraphs.length - 1];
+    if (last.length < 80 && !last.endsWith(".") && !last.endsWith(",")) {
+      closingName = bodyParagraphs.pop()!;
+    }
+  }
+
+  return { senderLines, recipientLines, dateLine, subjectLine, bodyParagraphs, closingName };
 }
 
+/* ── HTML generation ──────────────────────────────────────── */
+
 function toPdfHtml(document: GeneratedDocument): string {
-  const paragraphsHtml = toParagraphHtml(document.content);
+  const parsed = parseContent(document.content);
+
+  const senderHtml = parsed.senderLines.length > 0
+    ? `<div class="sender">${parsed.senderLines.map((l) => `<div>${esc(l)}</div>`).join("")}</div>`
+    : "";
+
+  const recipientHtml = parsed.recipientLines.length > 0
+    ? `<div class="recipient">${parsed.recipientLines.map((l) => `<div>${esc(l)}</div>`).join("")}</div>`
+    : "";
+
+  const dateHtml = parsed.dateLine
+    ? `<div class="date-line">${esc(parsed.dateLine)}</div>`
+    : "";
+
+  const subjectHtml = parsed.subjectLine
+    ? `<div class="subject">${esc(parsed.subjectLine)}</div>`
+    : "";
+
+  const bodyHtml = parsed.bodyParagraphs
+    .map((p) => {
+      const safe = esc(p).replace(/\n/g, "<br />");
+      return `<p class="body-paragraph">${safe}</p>`;
+    })
+    .join("\n");
 
   const signatureHtml = document.signatureDataUri
-    ? `<div class=\"signature-wrap\"><div class=\"signature-title\">Signature</div><img src=\"${escapeHtml(
-        document.signatureDataUri
-      )}\" alt=\"Signature\" class=\"signature-image\" /></div>`
+    ? `<div class="signature-block">
+        <img src="${esc(document.signatureDataUri)}" alt="Signature" class="signature-image" />
+      </div>`
+    : "";
+
+  const closingNameHtml = parsed.closingName
+    ? `<div class="closing-name">${esc(parsed.closingName)}</div>`
     : "";
 
   return `
@@ -45,110 +135,113 @@ function toPdfHtml(document: GeneratedDocument): string {
     <style>
       @page {
         size: A4;
-        margin: 22mm 18mm 24mm 18mm;
+        margin: 25mm 25mm 25mm 25mm;
       }
 
       :root {
-        --text: #1f2a3d;
-        --subtle: #5a6781;
-        --rule: #d5ddeb;
-        --accent: #294a77;
+        --text: #1a1a1a;
+        --muted: #555;
+        --rule: #ccc;
       }
 
       * {
         box-sizing: border-box;
+        margin: 0;
+        padding: 0;
       }
 
       body {
-        margin: 0;
         font-family: "Times New Roman", "Georgia", serif;
         color: var(--text);
         font-size: 12pt;
-        line-height: 1.5;
+        line-height: 1.6;
         background: #fff;
       }
 
-      .sheet {
+      .page {
         width: 100%;
+        position: relative;
       }
 
-      .brand {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: 14mm;
-        border-bottom: 1px solid var(--rule);
-        padding-bottom: 6mm;
+      /* ── Sender (top-left, italic, bold) ── */
+      .sender {
+        font-style: italic;
+        font-weight: bold;
+        font-size: 12pt;
+        line-height: 1.5;
+        margin-bottom: 10mm;
       }
 
-      .brand-title {
-        font-family: "Helvetica Neue", "Arial", sans-serif;
-        font-size: 10pt;
-        color: var(--subtle);
-        letter-spacing: 0.05em;
-        text-transform: uppercase;
+      /* ── Recipient (right-aligned) ── */
+      .recipient {
+        text-align: right;
+        font-weight: bold;
+        font-size: 12pt;
+        line-height: 1.5;
+        margin-bottom: 10mm;
       }
 
-      .brand-document {
-        font-family: "Helvetica Neue", "Arial", sans-serif;
-        font-size: 9.5pt;
-        color: var(--accent);
-        font-weight: 600;
+      /* ── Date line ── */
+      .date-line {
+        font-style: italic;
+        margin-bottom: 10mm;
       }
 
-      .paragraph {
-        margin: 0 0 5.5mm 0;
-        text-align: left;
+      /* ── Subject (bold, with underline) ── */
+      .subject {
+        font-weight: bold;
+        margin-bottom: 10mm;
+        padding-bottom: 2mm;
       }
 
-      .paragraph-intro {
+      /* ── Body ── */
+      .body-paragraph {
+        margin-bottom: 6mm;
+        text-align: justify;
+        text-indent: 0;
+      }
+
+      .body-paragraph:first-of-type {
         margin-top: 2mm;
       }
 
-      .signature-wrap {
-        margin-top: 12mm;
-        display: flex;
-        flex-direction: column;
-        align-items: flex-end;
+      /* ── Closing name ── */
+      .closing-name {
+        margin-top: 10mm;
+        font-weight: bold;
+        font-style: italic;
+      }
+
+      /* ── Signature ── */
+      .signature-block {
+        margin-top: 8mm;
         page-break-inside: avoid;
       }
 
-      .signature-title {
-        font-family: "Helvetica Neue", "Arial", sans-serif;
-        color: var(--subtle);
-        font-size: 9pt;
-        margin-bottom: 2mm;
-      }
-
       .signature-image {
-        width: 56mm;
-        max-height: 24mm;
+        width: 50mm;
+        max-height: 22mm;
         object-fit: contain;
-      }
-
-      .footer-rule {
-        margin-top: 10mm;
-        border-top: 1px solid var(--rule);
-        height: 0;
       }
     </style>
   </head>
   <body>
-    <main class="sheet">
-      <header class="brand">
-        <div class="brand-title">Document redige</div>
-        <div class="brand-document">${escapeHtml(document.templateTitle)}</div>
-      </header>
+    <main class="page">
+      ${senderHtml}
+      ${recipientHtml}
+      ${dateHtml}
+      ${subjectHtml}
 
-      ${paragraphsHtml}
+      ${bodyHtml}
 
+      ${closingNameHtml}
       ${signatureHtml}
-
-      <div class="footer-rule"></div>
     </main>
   </body>
 </html>`;
 }
+
+/* ── Export function ───────────────────────────────────────── */
 
 export async function exportDocumentPdf(document: GeneratedDocument): Promise<{ uri?: string }> {
   const html = toPdfHtml(document);

@@ -5,6 +5,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import Colors from "@/constants/colors";
 import { DocumentProvider } from "@/context/DocumentContext";
 import { ProfileProvider } from "@/context/ProfileContext";
+import { AddressBookProvider } from "@/context/AddressBookContext";
 import { AppErrorBoundary } from "@/components/AppErrorBoundary";
 
 SplashScreen.preventAutoHideAsync();
@@ -36,7 +37,9 @@ export default function RootLayout() {
       <AppErrorBoundary>
         <ProfileProvider>
           <DocumentProvider>
-            <RootLayoutNav />
+            <AddressBookProvider>
+              <RootLayoutNav />
+            </AddressBookProvider>
           </DocumentProvider>
         </ProfileProvider>
       </AppErrorBoundary>

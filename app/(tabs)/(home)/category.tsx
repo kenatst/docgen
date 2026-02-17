@@ -28,7 +28,7 @@ export default function CategoryScreen() {
 
   return (
     <LinearGradient
-      colors={["#FFF6F3", "#F2F8FF", "#F5FFF7"]}
+      colors={["#FDF8F3", "#FFF5EC", "#FDF8F3"]}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={styles.container}
@@ -61,7 +61,7 @@ export default function CategoryScreen() {
             >
               <BlurView intensity={24} tint="light" style={styles.templateCard}>
                 <View style={styles.templateIcon}>
-                  <FileText color={Colors.primary} size={18} />
+                  <FileText color={Colors.accent} size={18} />
                 </View>
                 <View style={styles.templateBody}>
                   <Text style={styles.templateTitle}>{template.title}</Text>
@@ -92,9 +92,9 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     padding: 18,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.76)",
+    borderColor: "rgba(230,200,170,0.30)",
     overflow: "hidden",
-    backgroundColor: "rgba(255,255,255,0.28)",
+    backgroundColor: "rgba(255,250,245,0.55)",
   },
   bannerTint: {
     ...StyleSheet.absoluteFillObject,
@@ -128,16 +128,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.78)",
+    borderColor: "rgba(230,200,170,0.30)",
     padding: 13,
-    backgroundColor: "rgba(255,255,255,0.28)",
+    backgroundColor: "rgba(255,250,245,0.50)",
     overflow: "hidden",
   },
   templateIcon: {
     width: 36,
     height: 36,
     borderRadius: 12,
-    backgroundColor: "rgba(125, 186, 255, 0.28)",
+    backgroundColor: "rgba(230, 126, 34, 0.18)",
     justifyContent: "center",
     alignItems: "center",
     marginRight: 10,

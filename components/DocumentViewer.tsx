@@ -13,7 +13,7 @@ import {
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
-import { CheckCircle, Copy, Download, Share2 } from "lucide-react-native";
+import { CheckCircle, Copy, Download, Mail, Share2 } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
 import { GeneratedDocument } from "@/constants/types";
@@ -123,6 +123,34 @@ export function DocumentViewer({
     }
   }, [document]);
 
+  const handleEmail = useCallback(async () => {
+    setExportingPdf(true);
+    try {
+      const result = await exportDocumentPdf(document);
+      if (!result.uri) {
+        Alert.alert("Erreur", "Impossible de générer le PDF pour l'email.");
+        return;
+      }
+      const MailComposer = await import("expo-mail-composer");
+      const available = await MailComposer.isAvailableAsync();
+      if (!available) {
+        Alert.alert("Email indisponible", "Aucune application mail n'est configurée sur cet appareil.");
+        return;
+      }
+      await MailComposer.composeAsync({
+        subject: document.templateTitle,
+        body: "Veuillez trouver ci-joint le document généré via DocGen.",
+        attachments: [result.uri],
+      });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (error) {
+      console.error("Email send failed", error);
+      Alert.alert("Erreur", "L'envoi par email a échoué.");
+    } finally {
+      setExportingPdf(false);
+    }
+  }, [document]);
+
   return (
     <LinearGradient
       colors={["#FFF7F4", "#F4F8FF", "#F5FFF8"]}
@@ -223,11 +251,25 @@ export function DocumentViewer({
               activeOpacity={0.84}
               accessibilityRole="button"
               accessibilityLabel="Partager le document"
-              accessibilityHint="Ouvre la feuille de partage du systeme"
               testID="share-button"
             >
               <Share2 color={Colors.primary} size={18} />
               <Text style={styles.actionTextSecondary}>Partager</Text>
+            </TouchableOpacity>
+          ) : null}
+
+          {Platform.OS !== "web" ? (
+            <TouchableOpacity
+              style={[styles.actionButtonSecondary, exportingPdf && styles.actionButtonDisabled]}
+              onPress={handleEmail}
+              activeOpacity={0.84}
+              disabled={exportingPdf}
+              accessibilityRole="button"
+              accessibilityLabel="Envoyer par email"
+              testID="email-button"
+            >
+              <Mail color={Colors.primary} size={18} />
+              <Text style={styles.actionTextSecondary}>Email</Text>
             </TouchableOpacity>
           ) : null}
         </View>

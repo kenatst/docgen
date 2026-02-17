@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Assistant Rédaction Document",
-    "slug": "assistant-redaction-document",
+    "name": "DocGen",
+    "slug": "docgen",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -35,7 +35,8 @@
         }
       ],
       "expo-font",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-mail-composer"
     ],
     "experiments": {
       "typedRoutes": true

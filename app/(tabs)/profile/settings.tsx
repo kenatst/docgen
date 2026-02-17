@@ -69,7 +69,7 @@ function PrivacySection({ visible }: { visible: boolean }) {
 
             <Text style={styles.legalHeading}>1. Données Collectées</Text>
             <Text style={styles.legalText}>
-                Assistant Rédaction Document ne collecte aucune donnée personnelle en dehors de celles que
+                DocGen ne collecte aucune donnée personnelle en dehors de celles que
                 vous saisissez volontairement dans l'application (nom, adresse, email, téléphone, ville et
                 signature). Ces données sont stockées exclusivement sur votre appareil de manière chiffrée
                 et ne sont jamais transmises à des serveurs externes.
@@ -121,7 +121,7 @@ function TermsSection({ visible }: { visible: boolean }) {
 
             <Text style={styles.legalHeading}>1. Acceptation des Conditions</Text>
             <Text style={styles.legalText}>
-                En téléchargeant et en utilisant Assistant Rédaction Document, vous acceptez les présentes
+                En téléchargeant et en utilisant DocGen, vous acceptez les présentes
                 conditions. Si vous n'êtes pas d'accord, veuillez ne pas utiliser l'application.
             </Text>
 
@@ -198,7 +198,7 @@ export default function SettingsScreen() {
 
     return (
         <LinearGradient
-            colors={["#FFF8F4", "#F2F9FF", "#F8FFF5"]}
+            colors={["#FDF8F3", "#FFF5EC", "#FDF8F3"]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
             style={styles.container}
@@ -292,7 +292,7 @@ export default function SettingsScreen() {
 
                     <View style={styles.infoRow}>
                         <Text style={styles.infoLabel}>Application</Text>
-                        <Text style={styles.infoValue}>Assistant Rédaction Document</Text>
+                        <Text style={styles.infoValue}>DocGen</Text>
                     </View>
                     <View style={styles.separator} />
                     <View style={styles.infoRow}>
@@ -333,8 +333,8 @@ const styles = StyleSheet.create({
     sectionCard: {
         borderRadius: 18,
         borderWidth: 1,
-        borderColor: "rgba(255,255,255,0.76)",
-        backgroundColor: "rgba(255,255,255,0.3)",
+        borderColor: "rgba(230,200,170,0.28)",
+        backgroundColor: "rgba(255,250,245,0.48)",
         overflow: "hidden",
         padding: 14,
     },
@@ -358,7 +358,7 @@ const styles = StyleSheet.create({
         borderRadius: 10,
     },
     rowPressed: {
-        backgroundColor: "rgba(116,169,255,0.08)",
+        backgroundColor: "rgba(230,176,100,0.08)",
     },
     rowLeading: {
         flexDirection: "row",
@@ -377,7 +377,7 @@ const styles = StyleSheet.create({
     },
     separator: {
         height: StyleSheet.hairlineWidth,
-        backgroundColor: "rgba(147,174,215,0.24)",
+        backgroundColor: "rgba(200,180,150,0.24)",
         marginVertical: 2,
     },
     infoRow: {

@@ -6,6 +6,7 @@ import {
   Text,
   TouchableOpacity,
   View,
+  Image,
 } from "react-native";
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
@@ -18,7 +19,6 @@ import {
   FileCheck,
   FileText,
   Home,
-  PenTool,
   Wallet,
   Car,
   Scale,
@@ -66,7 +66,7 @@ export default function HomeScreen() {
 
   return (
     <LinearGradient
-      colors={["#FFF6F3", "#F2F8FF", "#F5FFF7"]}
+      colors={["#FDFBF7", "#FFF8F0", "#FDFBF7"]}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={styles.container}
@@ -80,11 +80,12 @@ export default function HomeScreen() {
         >
           <BlurView intensity={30} tint="light" style={styles.headerCard}>
             <View style={styles.logoRow}>
-              <View style={styles.logoBubble}>
-                <PenTool color={Colors.white} size={20} />
-              </View>
+              <Image
+                source={require("@/assets/images/icon.png")}
+                style={{ width: 46, height: 46, borderRadius: 12 }}
+              />
               <View>
-                <Text style={styles.logoText}>DocGen Studio</Text>
+                <Text style={styles.logoText}>DocGen</Text>
                 <Text style={styles.subtitle}>Courriers utiles, clairs, exportables en PDF</Text>
               </View>
             </View>
@@ -115,8 +116,8 @@ export default function HomeScreen() {
                     style={styles.cardTint}
                   />
                   <View style={styles.cardTop}>
-                    <View style={[styles.iconWrap, { backgroundColor: `${category.color}AA` }]}>
-                      <Icon color={Colors.primaryDark} size={19} />
+                    <View style={[styles.iconWrap, { backgroundColor: category.color ?? Colors.accent }]}>
+                      <Icon color={Colors.white} size={20} />
                     </View>
                     <ChevronRight color={Colors.textMuted} size={16} />
                   </View>
@@ -150,8 +151,8 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     padding: 16,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.72)",
-    backgroundColor: "rgba(255,255,255,0.28)",
+    borderColor: "rgba(230,200,170,0.30)",
+    backgroundColor: "rgba(255,250,245,0.55)",
     overflow: "hidden",
   },
   logoRow: {
@@ -163,7 +164,7 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 14,
-    backgroundColor: "#7EA7FF",
+    backgroundColor: Colors.primary,
     justifyContent: "center",
     alignItems: "center",
   },
@@ -192,8 +193,8 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     padding: 14,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.76)",
-    backgroundColor: "rgba(255,255,255,0.28)",
+    borderColor: "rgba(230,200,170,0.28)",
+    backgroundColor: "rgba(255,250,245,0.48)",
     overflow: "hidden",
     minHeight: 156,
   },
